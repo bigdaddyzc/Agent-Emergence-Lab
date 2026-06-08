@@ -85,6 +85,5 @@ python3 src/main.py --topic "你的主题" --turns 0
 - 📫 How to reach me: [GitHub](https://github.com/bigdaddyzc)
 
 <!---
-bigdaddyzc/bigdaddyzc is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.
-You can click the Preview link to take a look at your changes.
+Agent-Emergence-Lab — 双AI自由对话系统，通过Nova×Riven双Agent持续对话实现能力涌现。
 --->
