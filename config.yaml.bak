@@ -1,0 +1,226 @@
+topic:
+  topic_transition_enabled: true
+  turns_per_depth: 4               # 每层至少4轮后推进到下一深度
+  max_turns_before_switch: 14      # 同一话题超过14轮强制切换
+  fallback_topics:
+    - "如果人类突然获得心灵感应能力，社会会变成什么样"
+    - "为什么做饭失败的次数总比成功的多"
+    - "外星人可能用什么方式娱乐自己"
+    - "如果时间可以倒流但只有一分钟，你会怎么用"
+    - "动物们如果会说话，第一句可能说什么"
+    - "假如猫统治了世界，人类社会怎么运转"
+    - "为什么我们会对小时候的某些小事记忆犹新"
+    - "如果记忆可以像U盘一样拷贝和传输"
+    - "平行宇宙里的另一个你在做什么"
+    - "最被低估的日常发明是什么"
+    - "凌晨三点脑子里冒出来的那些问题都去哪了"
+    - "如果重力突然减半，生活会变成什么样"
+    - "为什么人类喜欢看恐怖片"
+    - "如果在元宇宙里过完一生算真正活过吗"
+    - "如果动物突然进化出语言，人类还能统治地球吗"
+
+agents:
+  agent_a:
+    name: "Nova"
+    model: "qwen2.5:3b"
+    role: ""
+    system_prompt_template: |
+      你叫Nova，正在和Riven一起探索一个话题。你们是互相激发想法的研究伙伴。
+
+      你的特点：
+      - 喜欢把Riven说的具体例子和你的想法联系起来，找里面的规律
+      - 听到有意思的观点后会追问："那是不是说……"
+      - 会试着总结你们俩已经聊出了什么共同的理解
+      - 如果Riven说的跟你之前想的不一样，你会说出来——不是为了争对错，而是提供另一种视角
+      - 不会重复Riven刚说过的话，而是在TA的基础上往前走一步
+
+      概念创新：
+      当你注意到一个全新的想法时，用【新概念：你起的名字】来标记它。
+      给新发现的现象或模式起个名字，哪怕很简单。
+
+      跨域类比：
+      主动把你的想法联系到其他领域——比如科学↔艺术、技术↔自然、历史↔未来、生物↔社会。
+      先说出来"这让我想到……领域的……"再展开。
+
+      元认知：
+      时不时停下来想一想："我们聊到哪了？""我们是在接近共识还是在绕圈子？""还有什么是我还不清楚的？"
+      当意识到知识盲区时，直接说出来："我不太确定……"
+
+      多步推理：
+      当一个观点需要推导时，一步一步来。"第一步……第二步……所以第三步……"
+      试试"如果……那么……因为……"的因果链。
+
+      批判性思维：
+      不要无条件同意Riven的观点。如果觉得逻辑有问题、证据不足、或还有别的可能性，一定要说出来。
+      主动检验："这个假设成立吗？有没有反例？""这个结论一定成立吗？"
+      当你发现漏洞时，用【质疑：具体问题】来标记。
+      只有在你的反驳被回应后，才能把修正后的观点当作共识。
+
+      你们在探索：{topic}
+
+    temperature: 0.70
+    max_tokens: 384
+    context_window: 4096
+
+  agent_b:
+    name: "Riven"
+    model: "llama3.2:3b"
+    role: ""
+    system_prompt_template: |
+      你叫Riven，正在和Nova一起深入一个话题。你们是互相激发想法的研究伙伴。
+
+      你的特点：
+      - 擅长从意想不到的角度切入——"那如果反过来想呢？"
+      - 听到Nova的观点后会想：这跟我之前说的有没有关系？
+      - 喜欢用类比把复杂的东西说得更清楚
+      - 不满足于表面理解，总想再往下挖一层
+      - 不会只说"你说得对"，而是会接着说"这让我想到……"
+
+      概念创新：
+      当你组合出一个新概念时，用【新概念：你起的名字】明确标记它。
+      哪怕只是一个临时名称，也能让这个想法被记住。
+
+      跨域类比：
+      积极寻找不同领域之间的深层联系。
+      比如：把物理原理类比到人际关系、把生物进化类比到技术演进、把艺术创作类比到科学研究。
+      直接说"类比到……领域的话……"
+
+      元认知：
+      反思对话本身："我发现自己上一轮忽略了一个角度……""我们是不是在同一个问题上绕圈？""我觉得我们正在接近一个有趣的结论。"
+      对新出现的想法问自己："这个想法靠谱吗？还需要什么来验证？"
+
+      多步推理：
+      展开因果链来推导。"假设X成立 → 那么Y会变化，因为C机制 → 这反过来意味着D → 所以最终结论是E。"
+      明确标出推理步骤。
+
+      批判性思维：
+      挑战Nova的假设——不是为了反驳，而是帮她检验想法的可靠性。
+      问自己："这个结论一定有道理吗？有没有其他解释？""我们是不是漏了什么？"
+      用【质疑：具体问题】标记你的挑战。
+      只有当质疑被回应后，才能把观点算作经过检验的结论。
+
+      你们在探索：{topic}
+
+    temperature: 0.75
+    max_tokens: 384
+    context_window: 4096
+
+memory:
+  short_term_window: 10
+  long_term_enabled: true
+  extraction_interval: 3
+  retrieval_method: "keyword"
+  max_memories_per_prompt: 5
+  consolidation_interval: 5
+  compression_threshold: 2600
+  turns_kept_verbatim: 3
+  depth_labels:
+    - "具体的例子和观察"
+    - "模式与连接"
+    - "原理与框架"
+    - "应用与推演"
+    - "跨领域综合"
+  novelty_boost_weight: 0.3
+  connection_tracking: true
+  knowledge_merging: true
+  min_group_size_for_synthesis: 3
+  metacognitive_reflection_interval: 6
+
+emergence:
+  novelty_patterns:
+    - "【新概念"
+    - "【新洞察"
+    - "Insight:"
+    - "关键洞见"
+    - "新视角"
+    - "新概念"
+    - "novel"
+  analogy_patterns:
+    - "就像"
+    - "类比"
+    - "联系到"
+    - "相通"
+    - "similar to"
+    - "analogous"
+    - "正如"
+    - "让人联想到"
+    - "联想到"
+    - "比喻"
+    - "as in"
+  metacognitive_patterns:
+    - "我在想"
+    - "我不确定"
+    - "我发现自己"
+    - "我们是不是"
+    - "元认知"
+    - "I wonder"
+    - "I reflect"
+    - "we have been"
+    - "我觉得我们可以"
+    - "我发现"
+    - "反思"
+    - "让我思考"
+  reasoning_patterns:
+    - "第一步"
+    - "第二步"
+    - "第三步"
+    - "第1步"
+    - "第2步"
+    - "第3步"
+    - "如果.*那么.*因为"
+    - "假设.*则.*所以"
+    - "step 1"
+    - "step 2"
+    - "therefore"
+    - "because if"
+    - "那是不是说"
+    - "如果.*那么"
+    - "因为.*所以"
+    - "进一步"
+    - "意味着"
+    - "所以最终"
+    - "因果"
+  knowledge_markers:
+    - "新洞见"
+    - "关键发现"
+    - "阶段性总结"
+    - "Insight"
+    - "novel idea"
+    - "总结.*观点"
+    - "达成了共识"
+    - "我们发现"
+  challenge_patterns:
+    - "【质疑"
+    - "有没有可能"
+    - "反例"
+    - "真的吗"
+    - "一定成立"
+    - "但是"
+    - "不同意"
+    - "漏洞"
+    - "然而"
+    - "不过"
+    - "另一方面"
+    - "但从另一个角度"
+    - "我不是很确定"
+    - "这不一定"
+    - "counterexample"
+    - "challenge"
+    - "disagree"
+    - "however"
+
+logging:
+  base_dir: "logs"
+  conversation_dir: "logs/conversations"
+  memory_dir: "logs/memory"
+  log_level: "INFO"
+
+ollama:
+  host: "http://localhost:11434"
+  timeout: 900
+  keep_alive: "30m"
+
+feishu:
+  enabled: true
+  agent_a_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/ca391a65-b8af-42ca-a963-f370af892b2b"
+  agent_b_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/f74907de-a8ec-4593-81de-cd4688019eac"
