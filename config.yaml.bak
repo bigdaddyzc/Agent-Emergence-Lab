@@ -222,5 +222,5 @@ ollama:
 
 feishu:
   enabled: true
-  agent_a_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/ca391a65-b8af-42ca-a963-f370af892b2b"
-  agent_b_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/f74907de-a8ec-4593-81de-cd4688019eac"
+  agent_a_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/XXXX"
+  agent_b_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/XXXX"
