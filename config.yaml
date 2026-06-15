@@ -2,22 +2,8 @@ topic:
   topic_transition_enabled: true
   turns_per_depth: 6               # 每层至少6轮后推进到下一深度（之前4轮太赶）
   max_turns_before_switch: 20      # 同一话题超过20轮强制切换（之前14轮太早）
-  fallback_topics:
-    - "如果人类突然获得心灵感应能力，社会会变成什么样"
-    - "为什么做饭失败的次数总比成功的多"
-    - "外星人可能用什么方式娱乐自己"
-    - "如果时间可以倒流但只有一分钟，你会怎么用"
-    - "动物们如果会说话，第一句可能说什么"
-    - "假如猫统治了世界，人类社会怎么运转"
-    - "为什么我们会对小时候的某些小事记忆犹新"
-    - "如果记忆可以像U盘一样拷贝和传输"
-    - "平行宇宙里的另一个你在做什么"
-    - "最被低估的日常发明是什么"
-    - "凌晨三点脑子里冒出来的那些问题都去哪了"
-    - "如果重力突然减半，生活会变成什么样"
-    - "为什么人类喜欢看恐怖片"
-    - "如果在元宇宙里过完一生算真正活过吗"
-    - "如果动物突然进化出语言，人类还能统治地球吗"
+  # 话题完全由 LLM 随机生成（src/ollama_client.py: generate_topic），
+  # 通过随机组合「领域+角度」种子保证多样性，不再使用预设话题列表。
 
 agents:
   agent_a:
@@ -231,6 +217,6 @@ ollama:
   keep_alive: "30m"
 
 feishu:
-  enabled: true
+  enabled: false   # set true only after filling in real webhook URLs below
   agent_a_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/XXXX"
   agent_b_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/XXXX"

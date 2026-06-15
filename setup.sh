@@ -43,7 +43,7 @@ echo "  Models downloaded."
 
 # Step 5: Verify
 echo "[5/5] Verifying installation..."
-python3 -c "import requests, yaml, numpy, flask; print('  All Python dependencies OK')"
+python3 -c "import requests, yaml, numpy, jieba, pytest; print('  All Python dependencies OK')"
 ollama list 2>&1 | tail -n +2
 echo ""
 
@@ -55,5 +55,4 @@ echo "To run:"
 echo "  1. Start Ollama (if not running):  ollama serve &"
 echo "  2. Activate venv:                  source venv/bin/activate"
 echo "  3. Launch the lab:                 python3 src/main.py --topic 'consciousness' --turns 10"
-echo "  4. Open browser:                   http://localhost:5000"
 echo ""

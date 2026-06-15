@@ -166,36 +166,67 @@ class OllamaClient:
 
     # ---- Topic Generation ----
 
+    # Random seeds for topic generation. Each call pairs one domain with one
+    # angle, so the LLM gets a fresh, unpredictable starting point every time
+    # instead of cycling through a handful of fixed prompt templates.
+    _TOPIC_DOMAINS = [
+        "科学", "自然", "宇宙", "技术", "人工智能", "历史", "未来",
+        "艺术", "音乐", "文学", "哲学", "心理", "情绪", "记忆",
+        "梦境", "语言", "数学", "生物", "进化", "城市", "建筑",
+        "游戏", "食物", "睡眠", "时间", "金钱", "童年", "孤独",
+        "习惯", "意识", "身份", "死亡", "运气", "日常生活", "人际关系",
+    ]
+    _TOPIC_ANGLES = [
+        "如果……会发生什么",
+        "为什么……",
+        "一个被严重低估的……",
+        "两个看似无关的事物之间隐藏的联系",
+        "一个反直觉的现象",
+        "一个我们习以为常、却从没认真想过的问题",
+        "假如把它推到极端",
+        "如果它突然消失",
+        "它在一百年后会变成什么样",
+        "它和另一个完全不同的领域的奇妙相似之处",
+    ]
+
+    _TOPIC_FALLBACKS = [
+        "如果人类突然获得心灵感应能力，社会会变成什么样",
+        "为什么我们会对小时候的某些小事记忆犹新",
+        "如果时间可以倒流但只有一分钟，你会怎么用",
+        "最被低估的日常发明是什么",
+        "如果记忆可以像U盘一样拷贝和传输，会改变什么",
+        "动物如果会说话，第一句可能说什么",
+        "凌晨三点脑子里冒出来的那些问题都去哪了",
+        "如果重力突然减半，生活会变成什么样",
+        "梦境如果能被录下来回放，会发生什么",
+        "为什么有些旋律听一次就忘不掉",
+    ]
+
     def generate_topic(self, model: str = "") -> str:
-        """Generate a random creative topic using Ollama."""
+        """Generate a random creative topic using Ollama.
+
+        Each call combines a random domain with a random angle and lets the
+        model invent a topic around that seed, maximizing variety. Falls back
+        to a random pick from a small pool if the model call fails.
+        """
         if not model:
             models = self.list_models()
             # Pick the first available model that's not too large
             model = models[0] if models else "qwen2.5:3b"
 
-        choices = [
-            # Abstract / philosophical
-            "Generate a single abstract or philosophical conversation topic for a deep discussion between two curious AI agents. The topic should explore concepts like meaning, truth, identity, time, or reality — anything goes. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # 'What if' speculative
-            "Generate a single creative 'what if' speculative conversation topic for a deep discussion between two curious AI agents. Think alternate history, future scenarios, hypothetical science — anything imaginative. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Everyday / concrete
-            "Generate a single creative, concrete conversation topic grounded in everyday life or human experience for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Science / nature
-            "Generate a single conversation topic about science, nature, or the universe for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Art / culture
-            "Generate a single conversation topic about art, culture, or creativity for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Society / psychology
-            "Generate a single conversation topic about society, psychology, or human behavior for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Consciousness / AI / technology
-            "Generate a single conversation topic about consciousness, AI, or technology for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Ethics / morality
-            "Generate a single conversation topic about ethics, morality, or values for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Metaphysics / existence
-            "Generate a single conversation topic about metaphysics, existence, or the nature of reality for a deep discussion between two curious AI agents. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-            # Completely random / surreal
-            "Generate a single completely random, surreal, or unexpected conversation topic for a deep discussion between two curious AI agents. It can be funny, strange, or deeply insightful — be creative. Output ONLY the topic, no explanation, no quotes, no prefix. Generate a unique topic now:",
-        ]
-        prompt = random.choice(choices)
+        domain = random.choice(self._TOPIC_DOMAINS)
+        angle = random.choice(self._TOPIC_ANGLES)
+        prompt = (
+            "你是一个擅长提出有趣话题的人。请围绕下面的线索，生成一个适合两个好奇的AI"
+            "深入讨论的对话话题。\n"
+            f"领域线索：{domain}\n"
+            f"切入角度：{angle}\n\n"
+            "要求：\n"
+            "- 只输出话题本身，一句话，不要解释、不要引号、不要任何前缀\n"
+            "- 话题要具体、新颖、能引发联想，不要空泛的大词\n"
+            "- 用中文\n\n"
+            "现在生成这个话题："
+        )
         try:
             resp = self.generate(
                 model=model,
@@ -204,11 +235,13 @@ class OllamaClient:
                 max_tokens=64,
             )
             topic = resp.text.strip().strip('"').strip("'").strip()
+            # Keep only the first line in case the model adds commentary
+            topic = topic.split("\n")[0].strip()
             if topic:
                 return topic
         except Exception:
             logger.warning("Topic generation failed, using fallback")
-        return "如果人类突然获得心灵感应能力，社会会变成什么样"
+        return random.choice(self._TOPIC_FALLBACKS)
 
     # ---- Internal ----
 

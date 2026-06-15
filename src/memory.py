@@ -178,23 +178,28 @@ class MemorySystem:
         return memories
 
     def classify_depth(self, text: str) -> int:
-        """Heuristically classify content depth on 1-5 scale using keyword signals."""
+        """Heuristically classify content depth on 1-5 scale using keyword signals.
+
+        Checks deepest layer first so a deep signal isn't masked by a shallower
+        keyword appearing earlier in the same text (e.g. "本质上...相通" → layer 5,
+        not layer 2).
+        """
         text_lower = text.lower()
-        # Layer 1: concrete examples, personal experiences
-        if any(kw in text_lower for kw in ["比如", "例如", "有一次", "我见过", "我最近"]):
-            return 1
-        # Layer 2: patterns, generalizations
-        if any(kw in text_lower for kw in ["总是", "往往", "经常", "通常", "本质上"]):
-            return 2
-        # Layer 3: principles, mechanisms
-        if any(kw in text_lower for kw in ["原理", "机制", "逻辑", "核心", "因为"]):
-            return 3
-        # Layer 4: applications
-        if any(kw in text_lower for kw in ["可以应用", "实际", "现实", "实践", "应用"]):
-            return 4
         # Layer 5: cross-domain synthesis
         if any(kw in text_lower for kw in ["联系到", "延伸到", "跨领域", "类比到", "相通"]):
             return 5
+        # Layer 4: applications
+        if any(kw in text_lower for kw in ["可以应用", "实际", "现实", "实践", "应用"]):
+            return 4
+        # Layer 3: principles, mechanisms
+        if any(kw in text_lower for kw in ["原理", "机制", "逻辑", "核心", "因为"]):
+            return 3
+        # Layer 2: patterns, generalizations
+        if any(kw in text_lower for kw in ["总是", "往往", "经常", "通常", "本质上"]):
+            return 2
+        # Layer 1: concrete examples, personal experiences
+        if any(kw in text_lower for kw in ["比如", "例如", "有一次", "我见过", "我最近"]):
+            return 1
         return 1
 
     def _classify_memory_type(self, text: str) -> str:
@@ -583,7 +588,10 @@ class MemorySystem:
         dot = float(np.dot(a_arr, b_arr))
         norm_a = float(np.linalg.norm(a_arr))
         norm_b = float(np.linalg.norm(b_arr))
-        return dot / (norm_a * norm_b + 1e-10)
+        denom = norm_a * norm_b
+        if denom == 0:
+            return 0.0
+        return dot / denom
 
     def _text_similarity(self, a: str, b: str, threshold: float = 0.25) -> bool:
         keywords_a = set(self._extract_keywords(a))

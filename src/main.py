@@ -105,6 +105,10 @@ def init_feishu(config: dict) -> tuple:
     if not webhook_a or not webhook_b:
         logger.warning("Feishu enabled but webhook URLs missing in config")
         return None, None
+    # Guard against the placeholder URLs shipped in the example config
+    if "XXXX" in webhook_a or "XXXX" in webhook_b:
+        logger.warning("Feishu enabled but webhook URLs are still placeholders; disabling")
+        return None, None
 
     from src.feishu import FeishuBot
     return (
@@ -295,7 +299,7 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
             token_count_response=stats_b.tokens_generated,
             duration_ms=stats_b.total_duration_ms,
             tokens_per_second=stats_b.tokens_per_second,
-            memory_count=len(memories),
+            memory_count=len(memories_b),
             timestamp=datetime.datetime.now().isoformat(),
         ))
         total_tokens += stats_b.tokens_generated
