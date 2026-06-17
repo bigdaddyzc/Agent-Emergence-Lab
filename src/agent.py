@@ -5,6 +5,8 @@ import random
 import re
 from dataclasses import dataclass
 
+from src.evaluator import EmergenceSignalEvaluator
+
 logger = logging.getLogger(__name__)
 
 # Max attempts when response is too short
@@ -287,57 +289,4 @@ class Agent:
                                 metacognitive_count, reasoning_steps,
                                 knowledge_generation.
         """
-        ec = emergence_config or {}
-        signals = {
-            "novel_concepts": 0,
-            "cross_domain_analogies": 0,
-            "metacognitive_count": 0,
-            "reasoning_steps": 0,
-            "knowledge_generation": 0,
-            "concept_elaboration": 0,
-            "question_propagation": 0,
-        }
-
-        # Novel concept markers
-        for p in ec.get("novelty_patterns", ["【新概念"]):
-            signals["novel_concepts"] += len(re.findall(p, text))
-
-        # Cross-domain analogy markers
-        for p in ec.get("analogy_patterns", ["就像", "类比", "联系到", "相通"]):
-            signals["cross_domain_analogies"] += len(
-                re.findall(p, text, re.IGNORECASE))
-
-        # Metacognitive markers
-        for p in ec.get("metacognitive_patterns",
-                         ["我在想", "我不确定", "我发现自己", "我们是不是"]):
-            signals["metacognitive_count"] += len(
-                re.findall(p, text, re.IGNORECASE))
-
-        # Reasoning step markers
-        for p in ec.get("reasoning_patterns",
-                         ["第一步", "第二步", "第1步", "第2步"]):
-            signals["reasoning_steps"] += len(
-                re.findall(p, text, re.IGNORECASE))
-
-        # Knowledge generation markers
-        for p in ec.get("knowledge_markers", ["新洞见", "关键发现", "Insight"]):
-            signals["knowledge_generation"] += len(
-                re.findall(p, text, re.IGNORECASE))
-
-        # Critical challenge markers
-        signals["critical_challenges"] = 0
-        for p in ec.get("challenge_patterns", ["【质疑", "有没有可能", "反例", "但是"]):
-            signals["critical_challenges"] += len(
-                re.findall(p, text, re.IGNORECASE))
-
-        # Concept elaboration: further development of a named concept
-        signals["concept_elaboration"] = len(re.findall(
-            r"这个概念|这个想法|这个观点.*进一步|这个思路|基于这个概念|在这个基础上",
-            text))
-
-        # Question propagation: building deeper questions from partner's ideas
-        signals["question_propagation"] = len(re.findall(
-            r"这让我想问|进一步的问题是|更深一层的问题是|如果.*那么.*是否意味着|进而追问",
-            text))
-
-        return signals
+        return EmergenceSignalEvaluator(emergence_config).evaluate_dict(text)

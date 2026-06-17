@@ -20,6 +20,8 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from src.agent import Agent, AgentConfig
+from src.config_validator import validate_config
+from src.evaluator import ConceptTracker, EmergenceSignalEvaluator
 from src.logger import Logger, TurnLog, SessionLog
 from src.memory import MemorySystem
 from src.ollama_client import OllamaClient
@@ -72,7 +74,9 @@ def _print_summary(metrics: dict, log_path: str, snap_path: str):
 
 def load_config(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    validate_config(config)
+    return config
 
 
 def get_project_root() -> str:
@@ -166,6 +170,8 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
 
     # Emergence config
     emergence_config = config.get("emergence", {})
+    evaluator = EmergenceSignalEvaluator(emergence_config)
+    concept_tracker = ConceptTracker()
     meta_reflection_interval = config.get("memory", {}).get(
         "metacognitive_reflection_interval", 6)
 
@@ -239,8 +245,11 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
                              stats_a.tokens_generated)
 
         # ── Emergence signal tracking (Agent A) ──
-        signals_a = agent_a.extract_emergence_signals(
-            response_a, emergence_config=emergence_config)
+        concept_events_a = concept_tracker.observe(
+            response_a, turn_number=turn, agent_name=agent_a.name)
+        if concept_events_a:
+            logger_inst.log_metric("concept_events", len(concept_events_a), turn)
+        signals_a = evaluator.evaluate_dict(response_a)
         for signal_name, signal_value in signals_a.items():
             if signal_value > 0:
                 logger_inst.log_metric(
@@ -308,8 +317,11 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
                              stats_b.tokens_generated)
 
         # ── Emergence signal tracking (Agent B) ──
-        signals_b = agent_b.extract_emergence_signals(
-            response_b, emergence_config=emergence_config)
+        concept_events_b = concept_tracker.observe(
+            response_b, turn_number=turn, agent_name=agent_b.name)
+        if concept_events_b:
+            logger_inst.log_metric("concept_events", len(concept_events_b), turn)
+        signals_b = evaluator.evaluate_dict(response_b)
         for signal_name, signal_value in signals_b.items():
             if signal_value > 0:
                 logger_inst.log_metric(

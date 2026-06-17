@@ -35,11 +35,14 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 echo "  Dependencies installed."
 
-# Step 4: Pull models
-echo "[4/5] Pulling Ollama models (this may take a while)..."
-ollama pull qwen2.5:3b 2>&1 | tail -1
-ollama pull llama3.2:3b 2>&1 | tail -1
-echo "  Models downloaded."
+# Step 4: Pull models from config
+MODEL_CONFIG="${CONFIG_PATH:-configs/low_resource_4g.yaml}"
+if [ ! -f "$MODEL_CONFIG" ]; then
+    MODEL_CONFIG="config.yaml"
+fi
+echo "[4/5] Pulling Ollama models from $MODEL_CONFIG (this may take a while)..."
+python3 scripts/install_models.py --config "$MODEL_CONFIG"
+echo "  Models ready."
 
 # Step 5: Verify
 echo "[5/5] Verifying installation..."
@@ -54,5 +57,5 @@ echo ""
 echo "To run:"
 echo "  1. Start Ollama (if not running):  ollama serve &"
 echo "  2. Activate venv:                  source venv/bin/activate"
-echo "  3. Launch the lab:                 python3 src/main.py --topic 'consciousness' --turns 10"
+echo "  3. Launch on 4G CPU:               python3 src/main.py --config configs/low_resource_4g.yaml --topic 'consciousness' --turns 10"
 echo ""

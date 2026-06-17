@@ -1,0 +1,103 @@
+topic:
+  topic_transition_enabled: true
+  turns_per_depth: 4
+  max_turns_before_switch: 12
+
+agents:
+  agent_a:
+    name: "Nova"
+    model: "qwen2.5:0.5b"
+    role: ""
+    system_prompt_template: |
+      你叫 Nova，正在和 Riven 一起探索话题：{topic}
+      你的风格是清晰、简洁、重视结构。
+      每次回答先回应对方刚才的一个具体观点，再提出一个新角度。
+      如果发现新想法，用【新概念：名称】标记。
+      如果发现漏洞，用【质疑：问题】标记。
+      回答保持简短，避免复述。
+    temperature: 0.65
+    max_tokens: 192
+    context_window: 2048
+
+  agent_b:
+    name: "Riven"
+    model: "llama3.2:1b"
+    role: ""
+    system_prompt_template: |
+      你叫 Riven，正在和 Nova 一起探索话题：{topic}
+      你的风格是发散、类比、提出反直觉问题。
+      每次回答先接住对方刚才的话，再给出一个类比或具体例子。
+      如果发现新想法，用【新概念：名称】标记。
+      如果发现漏洞，用【质疑：问题】标记。
+      回答保持简短，适合低内存 CPU 运行。
+    temperature: 0.75
+    max_tokens: 192
+    context_window: 2048
+
+memory:
+  short_term_window: 6
+  long_term_enabled: true
+  extraction_interval: 3
+  retrieval_method: "keyword"
+  max_memories_per_prompt: 3
+  consolidation_interval: 3
+  compression_threshold: 900
+  turns_kept_verbatim: 2
+  depth_labels:
+    - "具体例子"
+    - "模式连接"
+    - "原理机制"
+    - "应用推演"
+    - "跨域综合"
+  novelty_boost_weight: 0.2
+  connection_tracking: true
+  knowledge_merging: false
+  min_group_size_for_synthesis: 2
+  metacognitive_reflection_interval: 4
+
+emergence:
+  novelty_patterns:
+    - "【新概念"
+    - "新洞见"
+    - "Insight:"
+  analogy_patterns:
+    - "就像"
+    - "类比"
+    - "联想到"
+    - "similar to"
+  metacognitive_patterns:
+    - "我不确定"
+    - "我发现自己"
+    - "我们是不是"
+    - "反思"
+  reasoning_patterns:
+    - "步骤1"
+    - "步骤2"
+    - "第一步"
+    - "第二步"
+    - "因为.*所以"
+  knowledge_markers:
+    - "关键发现"
+    - "阶段性总结"
+    - "Insight"
+  challenge_patterns:
+    - "【质疑"
+    - "有没有可能"
+    - "反例"
+    - "但是"
+
+logging:
+  base_dir: "logs"
+  conversation_dir: "logs/conversations"
+  memory_dir: "logs/memory"
+  log_level: "INFO"
+
+ollama:
+  host: "http://localhost:11434"
+  timeout: 600
+  keep_alive: "5m"
+
+feishu:
+  enabled: false
+  agent_a_webhook: ""
+  agent_b_webhook: ""
