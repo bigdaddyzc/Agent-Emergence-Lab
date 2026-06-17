@@ -10,6 +10,8 @@ from typing import Optional
 
 import numpy as np
 
+from src.model_roles import get_helper_model
+
 logger = logging.getLogger(__name__)
 
 EN_STOPWORDS = {
@@ -59,6 +61,8 @@ class MemoryEntry:
     novelty_score: float = 0.0  # 0.0 ~ 1.0
     connections: list[str] = field(default_factory=list)  # 关联记忆ID
     is_synthetic: bool = False  # 是否由合并产生
+    embedding: list[float] = field(default_factory=list)
+    quality_score: float = 1.0
 
 
 class MemorySystem:
@@ -74,6 +78,11 @@ class MemorySystem:
         self.retrieval_method = mem_config.get("retrieval_method", "keyword")
         self.max_memories = mem_config.get("max_memories_per_prompt", 5)
         self.consolidation_interval = mem_config.get("consolidation_interval", 5)
+        self.min_memory_quality = mem_config.get("min_memory_quality", 0.25)
+        self.embedding_model = mem_config.get("embedding_model", "")
+        self.memory_archive_enabled = mem_config.get("memory_archive_enabled", True)
+        self.archive_after_turns = mem_config.get("archive_after_turns", 30)
+        self.archive_quality_threshold = mem_config.get("archive_quality_threshold", 0.35)
 
         # Context compression
         self.compressed_summary = ""
@@ -85,6 +94,7 @@ class MemorySystem:
         # In-memory stores
         self.short_term: list[dict] = []
         self.long_term: list[MemoryEntry] = []
+        self.archived_long_term: list[MemoryEntry] = []
         self._extraction_count = 0
         self.last_retrieved: list[MemoryEntry] = []
 
@@ -132,7 +142,7 @@ class MemorySystem:
 
         try:
             resp = self.client.generate(
-                model=self.config["agents"]["agent_a"]["model"],
+                model=get_helper_model(self.config),
                 prompt=prompt,
                 temperature=0.3,
                 max_tokens=300,
@@ -161,6 +171,10 @@ class MemorySystem:
                 content = line
 
             keywords = self._extract_keywords(content)
+            quality = self._score_memory_quality(content, mem_type, novelty, keywords)
+            if quality < self.min_memory_quality:
+                logger.info("Discarded low-quality memory: %.2f %s", quality, content[:80])
+                continue
             mem = MemoryEntry(
                 id=f"mem_{uuid.uuid4().hex[:8]}",
                 content=content,
@@ -172,6 +186,8 @@ class MemorySystem:
                 depth_level=self.classify_depth(content),
                 memory_type=mem_type,
                 novelty_score=novelty,
+                embedding=self._embed_text(content),
+                quality_score=quality,
             )
             memories.append(mem)
 
@@ -250,7 +266,9 @@ class MemorySystem:
         min_turn = min(m.turn_number for m in self.long_term)
         turn_range = max(max_turn - min_turn, 1)
 
-        if self.retrieval_method == "keyword":
+        query_embedding = self._embed_text(query) if self.retrieval_method in ("embedding", "hybrid") else []
+
+        if self.retrieval_method in ("keyword", "embedding", "hybrid"):
             scored = []
             for mem in self.long_term:
                 mem_keywords = set(mem.keywords)
@@ -260,6 +278,10 @@ class MemorySystem:
                     intersection = query_keywords & mem_keywords
                     union = query_keywords | mem_keywords
                     keyword_score = len(intersection) / max(len(union), 1)
+
+                embedding_score = 0.0
+                if self.retrieval_method in ("embedding", "hybrid") and query_embedding and mem.embedding:
+                    embedding_score = max(0.0, self._cosine_similarity(query_embedding, mem.embedding))
 
                 # Topic bonus: memories matching current topic get +0~0.3
                 topic_score = 0
@@ -278,7 +300,16 @@ class MemorySystem:
                 novelty_weight = self.config.get("memory", {}).get("novelty_boost_weight", 0.3)
                 novelty_mult = 1.0 + novelty_weight * mem.novelty_score
 
-                final_score = (keyword_score + topic_score) * recency_mult * novelty_mult
+                if self.retrieval_method == "embedding":
+                    base_score = embedding_score + topic_score
+                elif self.retrieval_method == "hybrid":
+                    base_score = (0.55 * embedding_score) + (0.25 * keyword_score) + topic_score
+                else:
+                    base_score = keyword_score + topic_score
+
+                quality_mult = max(0.25, mem.quality_score)
+                final_score = base_score * recency_mult * novelty_mult * quality_mult
+                mem.relevance_score = final_score
                 scored.append((mem, final_score))
 
             scored.sort(key=lambda x: x[1], reverse=True)
@@ -360,6 +391,31 @@ class MemorySystem:
             len(self.long_term), len(merged),
         )
         self.long_term = merged
+        self.archive_stale_memories()
+
+    def archive_stale_memories(self, current_turn: int | None = None) -> int:
+        """Archive old, low-quality memories that are not being reused."""
+        if not self.memory_archive_enabled or not self.long_term:
+            return 0
+        if current_turn is None:
+            current_turn = max(m.turn_number for m in self.long_term)
+        kept = []
+        archived = []
+        for mem in self.long_term:
+            age = current_turn - mem.turn_number
+            should_archive = (
+                age >= self.archive_after_turns
+                and mem.ref_count == 0
+                and mem.quality_score <= self.archive_quality_threshold
+                and not mem.is_synthetic
+            )
+            if should_archive:
+                archived.append(mem)
+            else:
+                kept.append(mem)
+        self.long_term = kept
+        self.archived_long_term.extend(archived)
+        return len(archived)
 
     def _find_related_groups(self, threshold: float = 0.3) -> list[list[MemoryEntry]]:
         """Group memories by keyword overlap threshold. Returns groups of 2+ members."""
@@ -391,7 +447,7 @@ class MemorySystem:
         )
         try:
             resp = self.client.generate(
-                model=self.config["agents"]["agent_a"]["model"],
+                model=get_helper_model(self.config),
                 prompt=prompt,
                 temperature=0.3,
                 max_tokens=100,
@@ -412,6 +468,9 @@ class MemorySystem:
                 depth_level=min(5, max(m.depth_level for m in group) + 1),
                 memory_type="insight",
                 novelty_score=min(1.0, avg_novelty + 0.1),
+                embedding=self._embed_text(content),
+                quality_score=self._score_memory_quality(
+                    content, "insight", min(1.0, avg_novelty + 0.1), keywords),
                 is_synthetic=True,
             )
         except Exception as e:
@@ -439,6 +498,23 @@ class MemorySystem:
     def get_synthetic_memory_count(self) -> int:
         """Count memories created by consolidation merging."""
         return sum(1 for m in self.long_term if m.is_synthetic)
+
+    def get_memory_health_stats(self) -> dict[str, float | int]:
+        if not self.long_term:
+            return {
+                "active_count": 0,
+                "archived_count": len(self.archived_long_term),
+                "avg_quality": 0.0,
+                "zero_ref_count": 0,
+            }
+        avg_quality = sum(m.quality_score for m in self.long_term) / len(self.long_term)
+        zero_ref = sum(1 for m in self.long_term if m.ref_count == 0)
+        return {
+            "active_count": len(self.long_term),
+            "archived_count": len(self.archived_long_term),
+            "avg_quality": round(avg_quality, 3),
+            "zero_ref_count": zero_ref,
+        }
 
     def update_prompt_tokens(self, token_count: int) -> None:
         """Track cumulative prompt tokens for compression decisions."""
@@ -490,7 +566,7 @@ class MemorySystem:
         )
         try:
             resp = self.client.generate(
-                model=self.config["agents"]["agent_a"]["model"],
+                model=get_helper_model(self.config),
                 prompt=prompt,
                 temperature=0.3,
                 max_tokens=200,
@@ -524,8 +600,16 @@ class MemorySystem:
                 "novelty_score": mem.novelty_score,
                 "connections": mem.connections,
                 "is_synthetic": mem.is_synthetic,
+                "embedding": mem.embedding,
+                "quality_score": mem.quality_score,
             }
             data.append(item)
+        if self.archived_long_term:
+            data.append({
+                "id": "__archive_meta__",
+                "content": "archived memories are stored separately in this snapshot",
+                "archived_count": len(self.archived_long_term),
+            })
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -547,6 +631,8 @@ class MemorySystem:
                 novelty_score=item.get("novelty_score", 0.0),
                 connections=item.get("connections", []),
                 is_synthetic=item.get("is_synthetic", False),
+                embedding=item.get("embedding", []),
+                quality_score=item.get("quality_score", 1.0),
             )
             for item in data
         ]
@@ -592,6 +678,46 @@ class MemorySystem:
         if denom == 0:
             return 0.0
         return dot / denom
+
+    def _embed_text(self, text: str) -> list[float]:
+        if not self.client or self.retrieval_method not in ("embedding", "hybrid"):
+            return []
+        model = self.embedding_model or self.config.get("agents", {}).get("agent_a", {}).get("model", "")
+        if not model:
+            return []
+        try:
+            return self.client.embed(model, text)
+        except Exception as e:
+            logger.warning("Embedding failed, falling back to keyword signals: %s", e)
+            return []
+
+    def _score_memory_quality(self, content: str, mem_type: str,
+                              novelty: float, keywords: list[str]) -> float:
+        text = content.strip()
+        if len(text) < 4:
+            return 0.0
+        if re.fullmatch(r"[\W_]+", text):
+            return 0.0
+
+        score = 0.2
+        score += min(len(keywords), 5) * 0.1
+        score += min(max(len(text) - 6, 0) / 60, 0.25)
+        score += min(max(novelty, 0.0), 1.0) * 0.2
+        if mem_type in ("insight", "analogy", "question", "metacognitive"):
+            score += 0.15
+        if any(marker in text for marker in ["讨论了", "提到了", "说了", "聊了"]):
+            score -= 0.2
+        if self._is_duplicate_memory(text):
+            score -= 0.25
+        return max(0.0, min(score, 1.0))
+
+    def _is_duplicate_memory(self, content: str) -> bool:
+        normalized = content.strip().lower().rstrip(".。")
+        for mem in self.long_term:
+            existing = mem.content.strip().lower().rstrip(".。")
+            if normalized == existing or self._text_similarity(normalized, existing, threshold=0.45):
+                return True
+        return False
 
     def _text_similarity(self, a: str, b: str, threshold: float = 0.25) -> bool:
         keywords_a = set(self._extract_keywords(a))

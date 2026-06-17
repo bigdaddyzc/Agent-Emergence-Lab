@@ -134,13 +134,16 @@ class Logger:
             f.write(existing)
 
     def _write_md_header(self, session: SessionLog) -> None:
+        agents = " x ".join(
+            f"{a.get('name', '?')} ({a.get('model', '?')}, {a.get('role', '')})"
+            for a in session.agents
+        )
         lines = [
             f"# Agent Emergence Lab - Session {session.session_id}",
             "",
             f"**Topic:** {session.topic}",
             f"**Started:** {session.start_time}",
-            f"**Agents:** {session.agents[0]['name']} ({session.agents[0]['model']}, {session.agents[0]['role']})"
-            f" x {session.agents[1]['name']} ({session.agents[1]['model']}, {session.agents[1]['role']})",
+            f"**Agents:** {agents}",
             "",
             "---",
             "",

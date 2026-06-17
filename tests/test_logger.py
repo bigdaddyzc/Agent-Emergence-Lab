@@ -53,3 +53,20 @@ def test_logger_writes_jsonl_markdown_and_snapshot(tmp_path):
     assert any(row["type"] == "metric" for row in rows)
     assert "hello" in open(logger._md_path, encoding="utf-8").read()
     assert json.load(open(snap, encoding="utf-8"))[0]["content"] == "memory"
+
+
+def test_logger_supports_single_agent_header(tmp_path):
+    logger = Logger(_config(tmp_path))
+    session = SessionLog(
+        session_id=logger.session_id,
+        topic="测试",
+        config_snapshot={},
+        agents=[{"name": "Nova", "model": "m", "role": ""}],
+        start_time="2026-01-01T00:00:00",
+        end_time="",
+        total_turns=1,
+        total_tokens=0,
+        total_duration_ms=0,
+    )
+    logger.log_session_metadata(session)
+    assert "Nova (m, )" in open(logger._md_path, encoding="utf-8").read()

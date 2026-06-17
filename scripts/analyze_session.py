@@ -19,6 +19,12 @@ SIGNAL_PREFIXES = (
     "question_propagation_",
 )
 
+QUALITY_PREFIXES = (
+    "repetition_score_",
+    "topic_drift_score_",
+    "stagnation_flag_",
+)
+
 
 def load_jsonl(path: Path) -> list[dict]:
     rows = []
@@ -48,10 +54,14 @@ def analyze(rows: list[dict]) -> dict:
         metric_by_turn[metric.get("turn_number", 0)][name] += value
 
     signal_totals = Counter()
+    quality_totals = Counter()
     for name, value in metric_totals.items():
         for prefix in SIGNAL_PREFIXES:
             if name.startswith(prefix):
                 signal_totals[prefix.rstrip("_")] += value
+        for prefix in QUALITY_PREFIXES:
+            if name.startswith(prefix):
+                quality_totals[prefix.rstrip("_")] += value
 
     high_signal_turns = []
     for turn_number, counter in metric_by_turn.items():
@@ -74,6 +84,8 @@ def analyze(rows: list[dict]) -> dict:
         "agent_response_tokens": dict(agent_tokens),
         "metric_totals": dict(metric_totals),
         "signal_totals": dict(signal_totals),
+        "quality_totals": dict(quality_totals),
+        "concept_events": metric_totals.get("concept_events", 0),
         "topic_switches": metric_totals.get("topic_switch", 0),
         "memories_extracted": metric_totals.get("memories_extracted", 0),
         "high_signal_turns": high_signal_turns[:10],
@@ -95,6 +107,8 @@ def format_summary(summary: dict) -> str:
         f"Response tokens: {summary['total_tokens']}",
         f"Agent turns: {summary['agent_turns']}",
         f"Signal totals: {summary['signal_totals']}",
+        f"Quality totals: {summary['quality_totals']}",
+        f"Concept events: {summary['concept_events']}",
         f"Memories extracted: {summary['memories_extracted']}",
         f"Topic switches: {summary['topic_switches']}",
         "High signal turns:",

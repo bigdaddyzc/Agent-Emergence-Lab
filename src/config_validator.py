@@ -29,6 +29,7 @@ def validate_config(config: dict) -> None:
     _validate_ollama(config["ollama"])
     _validate_topic(config["topic"])
     _validate_emergence(config["emergence"])
+    _validate_model_roles(config.get("model_roles", {}))
     _validate_feishu(config.get("feishu", {}))
 
 
@@ -113,6 +114,14 @@ def _validate_feishu(feishu: dict) -> None:
                 raise ConfigValidationError(f"feishu.{field} must be an https URL when enabled")
             if "XXXX" in value:
                 raise ConfigValidationError(f"feishu.{field} still contains placeholder XXXX")
+
+
+def _validate_model_roles(model_roles: dict) -> None:
+    if not model_roles:
+        return
+    for field in ("helper_model", "judge_model"):
+        if field in model_roles and model_roles[field] is not None and not isinstance(model_roles[field], str):
+            raise ConfigValidationError(f"model_roles.{field} must be a string")
 
 
 def _require(mapping: dict, key: str, path: str) -> None:

@@ -9,16 +9,16 @@ from pathlib import Path
 
 import yaml
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.model_roles import required_runtime_models
+
 
 def load_models_from_config(path: Path) -> list[str]:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    agents = data.get("agents", {})
-    models = []
-    for key in ("agent_a", "agent_b"):
-        model = agents.get(key, {}).get("model")
-        if model:
-            models.append(model)
-    return _dedupe(models)
+    return required_runtime_models(data)
 
 
 def list_installed_models() -> set[str]:

@@ -124,3 +124,47 @@ class EmergenceSignalEvaluator:
     def _count(pattern: str, text: str, *, ignore_case: bool = False) -> int:
         flags = re.IGNORECASE if ignore_case else 0
         return len(re.findall(pattern, text, flags))
+
+
+class DialogueQualityEvaluator:
+    """Tracks repetition, topic drift, and signal stagnation over turns."""
+
+    def __init__(self, *, stagnation_window: int = 3):
+        self.previous_by_agent: dict[str, str] = {}
+        self.recent_signal_scores: list[int] = []
+        self.stagnation_window = stagnation_window
+
+    def evaluate(self, *, agent_name: str, text: str, topic: str,
+                 signal_counts: dict[str, int]) -> dict[str, float]:
+        repetition = self._similarity(text, self.previous_by_agent.get(agent_name, ""))
+        drift = 1.0 - self._similarity(text, topic)
+        signal_score = sum(signal_counts.values())
+        self.recent_signal_scores.append(signal_score)
+        self.recent_signal_scores = self.recent_signal_scores[-self.stagnation_window:]
+        stagnation = 1.0 if (
+            len(self.recent_signal_scores) == self.stagnation_window
+            and sum(self.recent_signal_scores) == 0
+        ) else 0.0
+        self.previous_by_agent[agent_name] = text
+        return {
+            "repetition_score": round(repetition, 3),
+            "topic_drift_score": round(max(0.0, min(drift, 1.0)), 3),
+            "stagnation_flag": stagnation,
+        }
+
+    @staticmethod
+    def _similarity(a: str, b: str) -> float:
+        if not a or not b:
+            return 0.0
+        tokens_a = _simple_tokens(a)
+        tokens_b = _simple_tokens(b)
+        if not tokens_a or not tokens_b:
+            return 0.0
+        return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
+
+
+def _simple_tokens(text: str) -> set[str]:
+    lowered = text.lower()
+    english = set(re.findall(r"[a-z]{3,}", lowered))
+    chinese = set(re.findall(r"[\u4e00-\u9fff]{2}", lowered))
+    return english | chinese

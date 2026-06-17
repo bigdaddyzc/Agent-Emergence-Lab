@@ -1,6 +1,7 @@
 """Tests for memory system: keyword extraction, similarity, retrieval."""
 
 from src.memory import MemorySystem, MemoryEntry
+from tests.fakes import FakeOllamaClient
 
 
 def _make_ms():
@@ -161,6 +162,54 @@ class TestRetrieveRelevant:
         ]
         mems, info = ms.retrieve_relevant("memory", n=3)
         assert len(mems) == 3
+
+    def test_hybrid_retrieval_uses_embeddings(self):
+        ms = MemorySystem({"memory": {"retrieval_method": "hybrid"}}, FakeOllamaClient())
+        ms.long_term = [
+            MemoryEntry(
+                id="1", content="人类喜欢看恐怖片",
+                source_agent="Nova", turn_number=1, timestamp=100,
+                keywords=["人类", "恐怖片"], embedding=[1.0, 0.0, 0.0],
+            ),
+            MemoryEntry(
+                id="2", content="重力突然减半",
+                source_agent="Riven", turn_number=2, timestamp=200,
+                keywords=["重力", "减半"], embedding=[0.0, 1.0, 0.0],
+            ),
+        ]
+        mems, info = ms.retrieve_relevant("恐怖片", n=2)
+        assert mems[0].id == "1"
+
+
+class TestMemoryQuality:
+    def test_low_quality_memory_is_filtered(self):
+        ms = MemorySystem({"memory": {"min_memory_quality": 0.5}}, FakeOllamaClient())
+        # Duplicate-like boilerplate with low novelty and few keywords should be below threshold.
+        score = ms._score_memory_quality("讨论了X", "fact", 0.0, ms._extract_keywords("讨论了X"))
+        assert score < 0.5
+
+    def test_extracted_memories_include_quality_score(self):
+        ms = MemorySystem({"memory": {"min_memory_quality": 0.1}, "agents": {"agent_a": {"model": "m"}}}, FakeOllamaClient())
+        memories = ms.extract_memories("测试对话", "Nova", 1, topic="测试")
+        assert memories
+        assert all(0 <= m.quality_score <= 1 for m in memories)
+
+    def test_archive_stale_low_quality_memories(self):
+        ms = MemorySystem({"memory": {"archive_after_turns": 2, "archive_quality_threshold": 0.5}})
+        ms.long_term = [
+            MemoryEntry(
+                id="old", content="旧记忆", source_agent="Nova",
+                turn_number=1, timestamp=0, quality_score=0.2, ref_count=0,
+            ),
+            MemoryEntry(
+                id="used", content="被用过", source_agent="Nova",
+                turn_number=1, timestamp=0, quality_score=0.2, ref_count=1,
+            ),
+        ]
+        archived = ms.archive_stale_memories(current_turn=4)
+        assert archived == 1
+        assert [m.id for m in ms.long_term] == ["used"]
+        assert ms.get_memory_health_stats()["archived_count"] == 1
 
 
 class TestClassifyDepth:

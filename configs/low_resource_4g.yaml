@@ -34,6 +34,10 @@ agents:
     max_tokens: 192
     context_window: 2048
 
+model_roles:
+  helper_model: ""   # empty = reuse agent_a model; set only after benchmark passes
+  judge_model: ""    # optional offline judge model; disabled by default on 4G CPU
+
 memory:
   short_term_window: 6
   long_term_enabled: true

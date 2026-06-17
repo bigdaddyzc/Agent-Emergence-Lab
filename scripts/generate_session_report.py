@@ -22,6 +22,7 @@ def generate_report(summary: dict, rows: list[dict]) -> str:
         f"- Turn logs: {summary['total_turn_logs']}",
         f"- Response tokens: {summary['total_tokens']}",
         f"- Memories extracted: {summary['memories_extracted']}",
+        f"- Concept events: {summary['concept_events']}",
         f"- Topic switches: {summary['topic_switches']}",
         "",
         "## Agent Activity",
@@ -52,6 +53,17 @@ def generate_report(summary: dict, rows: list[dict]) -> str:
         lines.extend(snippets)
     else:
         lines.append("No high-signal turn snippets were available.")
+
+    lines.extend([
+        "",
+        "## Quality Warnings",
+        "",
+    ])
+    if summary["quality_totals"]:
+        for name, value in sorted(summary["quality_totals"].items()):
+            lines.append(f"- {name}: {round(value, 3)}")
+    else:
+        lines.append("- No repetition, drift, or stagnation metrics were logged.")
 
     lines.extend([
         "",

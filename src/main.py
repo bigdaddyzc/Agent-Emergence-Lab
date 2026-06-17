@@ -21,10 +21,12 @@ if _project_root not in sys.path:
 
 from src.agent import Agent, AgentConfig
 from src.config_validator import validate_config
-from src.evaluator import ConceptTracker, EmergenceSignalEvaluator
+from src.evaluator import ConceptTracker, DialogueQualityEvaluator, EmergenceSignalEvaluator
 from src.logger import Logger, TurnLog, SessionLog
 from src.memory import MemorySystem
+from src.model_roles import required_runtime_models
 from src.ollama_client import OllamaClient
+from src.topic_manager import TopicManager
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +90,7 @@ def verify_ollama(client, config: dict) -> None:
         print("错误: Ollama 未运行。请先启动: ollama serve")
         sys.exit(1)
     models = client.list_models()
-    required = [
-        config["agents"]["agent_a"]["model"],
-        config["agents"]["agent_b"]["model"],
-    ]
+    required = required_runtime_models(config)
     for m in required:
         if m not in models:
             print(f"错误: 模型 '{m}' 未找到。请先拉取: ollama pull {m}")
@@ -154,6 +153,7 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
     total_refs = 0
     completed_turns = 0
     current_topic = topic
+    topic_manager = TopicManager(config, agent_a.client)
     topic_switch_count = 0
 
     # Depth progression state
@@ -171,6 +171,7 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
     # Emergence config
     emergence_config = config.get("emergence", {})
     evaluator = EmergenceSignalEvaluator(emergence_config)
+    quality_evaluator = DialogueQualityEvaluator()
     concept_tracker = ConceptTracker()
     meta_reflection_interval = config.get("memory", {}).get(
         "metacognitive_reflection_interval", 6)
@@ -256,6 +257,12 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
                     f"{signal_name}_{agent_a.name.lower()}",
                     signal_value, turn,
                 )
+        quality_a = quality_evaluator.evaluate(
+            agent_name=agent_a.name, text=response_a,
+            topic=current_topic, signal_counts=signals_a)
+        for metric_name, metric_value in quality_a.items():
+            if metric_value > 0:
+                logger_inst.log_metric(f"{metric_name}_{agent_a.name.lower()}", metric_value, turn)
 
         if feishu_a:
             feishu_a.send_message(
@@ -328,6 +335,12 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
                     f"{signal_name}_{agent_b.name.lower()}",
                     signal_value, turn,
                 )
+        quality_b = quality_evaluator.evaluate(
+            agent_name=agent_b.name, text=response_b,
+            topic=current_topic, signal_counts=signals_b)
+        for metric_name, metric_value in quality_b.items():
+            if metric_value > 0:
+                logger_inst.log_metric(f"{metric_name}_{agent_b.name.lower()}", metric_value, turn)
 
         if feishu_b:
             feishu_b.send_message(
@@ -366,6 +379,9 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
 
         # ── Periodic memory emergence stats ──
         if turn > 0 and turn % 5 == 0:
+            archived = memory.archive_stale_memories(turn)
+            if archived:
+                logger_inst.log_metric("memory_archived_count", archived, turn)
             conn_density = memory.calculate_cross_connection_density()
             logger_inst.log_metric("memory_connection_density", conn_density, turn)
             novel_count = memory.get_novel_memory_count()
@@ -375,6 +391,8 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
                 logger_inst.log_metric(f"memory_type_{t}", c, turn)
             synth_count = memory.get_synthetic_memory_count()
             logger_inst.log_metric("synthetic_memory_count", synth_count, turn)
+            for name, value in memory.get_memory_health_stats().items():
+                logger_inst.log_metric(f"memory_health_{name}", value, turn)
 
         logger_inst.log_metric("cross_references", refs_a + refs_b, turn)
 
@@ -410,17 +428,7 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
             consecutive_low_refs = 0
             topic_switch_count += 1
 
-            # Dynamically generate next topic
-            new_topic = agent_b.client.generate_topic(
-                model=config["agents"]["agent_a"]["model"]
-            )
-            # Avoid identical consecutive topics
-            retries = 0
-            while new_topic.lower() == current_topic.lower() and retries < 3:
-                new_topic = agent_b.client.generate_topic(
-                    model=config["agents"]["agent_a"]["model"]
-                )
-                retries += 1
+            new_topic = topic_manager.generate_next_topic(current_topic)
 
             print(f"\n  --- 聊到了别的：{new_topic} ---")
 
@@ -499,9 +507,7 @@ def main():
     # Auto-generate topic if not specified
     if not args.topic:
         print("  正在随机生成话题...")
-        args.topic = ollama_client.generate_topic(
-            model=config["agents"]["agent_a"]["model"]
-        )
+        args.topic = TopicManager(config, ollama_client).initial_topic()
         print(f"  今日话题：{args.topic}\n")
 
     agent_a = Agent(AgentConfig(**config["agents"]["agent_a"]),

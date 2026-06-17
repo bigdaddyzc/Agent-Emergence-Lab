@@ -1,4 +1,4 @@
-from src.evaluator import ConceptTracker, EmergenceSignalEvaluator
+from src.evaluator import ConceptTracker, DialogueQualityEvaluator, EmergenceSignalEvaluator
 
 
 def test_evaluator_counts_core_signals():
@@ -32,3 +32,22 @@ def test_concept_tracker_records_named_concepts():
     summary = tracker.summary()
     assert summary["记忆回声"]["mentions"] == 1
     assert summary["记忆回声"]["first_turn"] == 2
+
+
+def test_dialogue_quality_detects_repetition_and_stagnation():
+    evaluator = DialogueQualityEvaluator(stagnation_window=2)
+    first = evaluator.evaluate(
+        agent_name="Nova",
+        text="记忆系统像图书馆",
+        topic="记忆系统",
+        signal_counts={"novel_concepts": 0},
+    )
+    second = evaluator.evaluate(
+        agent_name="Nova",
+        text="记忆系统像图书馆",
+        topic="记忆系统",
+        signal_counts={"novel_concepts": 0},
+    )
+    assert first["repetition_score"] == 0
+    assert second["repetition_score"] > 0
+    assert second["stagnation_flag"] == 1

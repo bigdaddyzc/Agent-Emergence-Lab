@@ -48,3 +48,11 @@ class FakeOllamaClient:
 
     def generate_topic(self, model=""):
         return "测试新话题"
+
+    def embed(self, model, input_text):
+        base = float(len(input_text) % 7)
+        if "恐怖片" in input_text:
+            return [1.0, 0.0, base]
+        if "重力" in input_text:
+            return [0.0, 1.0, base]
+        return [0.2, 0.2, base]
