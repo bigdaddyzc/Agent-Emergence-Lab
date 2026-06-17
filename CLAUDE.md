@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Activate venv (required before any Python commands)
 source venv/bin/activate
 
-# Run conversation (terminal mode only; web UI was removed)
+# Run conversation (terminal mode only)
 python3 src/main.py --topic "your topic" --turns 0
 # --turns 0  = infinite (Ctrl+C to stop)
 # --turns N  = stop after N rounds
@@ -18,6 +18,10 @@ python3 src/main.py --topic "your topic" --turns 0
 # Run tests
 python3 -m pytest tests/ -v
 
+# Run a single test file or test by name
+python3 -m pytest tests/test_agent.py -v
+python3 -m pytest tests/ -v -k "test_extract_references"
+
 # Set up from scratch
 bash setup.sh
 
@@ -26,9 +30,6 @@ ollama serve
 
 # Check available models
 ollama list
-
-# View running conversation (live tail)
-tail -f /tmp/emergence_*.log
 ```
 
 ## Project Overview
@@ -58,18 +59,12 @@ config.yaml → main.py (orchestrator) → agent_a (Nova) ↔ agent_b (Riven)
 
 - **`logger.py`** — `Logger` class writes to JSON-Lines (programmatic analysis), Markdown (human reading), and memory snapshot JSONs to `logs/memory/`.
 
-- **`feishu.py`** — `FeishuBot` for pushing agent messages to Feishu/Lark group chat via webhook (optional, enabled in config).
-
-### What was removed / doesn't exist
-- **No web UI** — `webui.py` source and `static/index.html` were removed. Only terminal output remains.
-- **No `--port` or `--resume` CLI flags** — only `--topic`, `--turns`, `--config`.
-- **No Flask dependency in requirements.txt** (only requests, PyYAML, numpy, jieba, pytest).
+- **`feishu.py`** — `FeishuBot` for pushing agent messages to Feishu/Lark group chat via webhook (optional, enabled in config). Webhook URLs are obfuscated in the repo — set real URLs in `config.yaml` before enabling.
 
 ### Tests (tests/)
 
 - `test_agent.py` — 22 tests covering `clean_response`, `extract_references`, `build_context`, `compile_system_prompt`
 - `test_memory.py` — 25 tests covering keyword extraction, similarity, retrieval, depth classification, compression scheduling
-- Run with: `python3 -m pytest tests/ -v`
 - Missing coverage: `main.py`, `logger.py`, `ollama_client.py`, `feishu.py`
 
 ## Agent Personas (current config.yaml)
@@ -87,11 +82,13 @@ Controls everything: agent prompts/params, memory system (extraction_interval, c
 
 **Key tunables** (optimized after v1→v2 experiments):
 - `extraction_interval: 2` — extract memories every 2 turns
-- `consolidation_interval: 3` — merge/dedup every 3 extraction cycles (~6 turns)
+- `consolidation_interval: 2` — merge/dedup every 2 extraction cycles (~4 turns)
 - `min_group_size_for_synthesis: 2` — synthesize from 2 related memories
+- `compression_threshold: 1800` — compress context when prompt tokens exceed this
 - `turns_per_depth: 6` — minimum turns before depth progression
 - `max_turns_before_switch: 20` — forced topic switch threshold
 - `metacognitive_reflection_interval: 4` — prompt metacognition every 4 turns
+- `keep_alive: 30m` — Ollama keeps models in VRAM for 30 minutes between turns
 
 ## Emergence Metrics & Analysis
 
