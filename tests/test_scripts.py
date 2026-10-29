@@ -65,3 +65,25 @@ def test_benchmark_markdown_formatter():
         "runs": [{"prompt": "p", "error": "", "tokens_per_second": 4.2, "sample": "ok"}],
     }])
     assert "| m | A | 4.2 | 10s | recommended |" in markdown
+
+
+def test_compare_experiments_rescores_manifest(tmp_path, capsys):
+    from compare_experiments import main as compare_main
+
+    logs = []
+    for mode, text in [("single_agent", "普通的话"), ("dual_basic", "【新概念：X】就像Y")]:
+        path = tmp_path / f"{mode}.jsonl"
+        rows = [
+            {"type": "session_start", "topic": "测试"},
+            {"type": "turn", "agent_name": "Nova", "content": text, "token_count_response": 5},
+        ]
+        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+        logs.append({"mode": mode, "topic": "测试", "jsonl_path": str(path), "scores": {}})
+    logs.append({"mode": "dual_basic", "topic": "测试", "jsonl_path": str(tmp_path / "gone.jsonl"),
+                 "scores": {"utterances": 1}})
+    manifest = tmp_path / "m.json"
+    manifest.write_text(json.dumps(logs, ensure_ascii=False), encoding="utf-8")
+    assert compare_main([str(manifest)]) == 0
+    out = capsys.readouterr().out
+    assert "Baseline: single_agent" in out
+    assert "| novel_concepts | 0 ± 0 |" in out
