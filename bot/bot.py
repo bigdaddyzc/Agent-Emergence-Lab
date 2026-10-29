@@ -61,6 +61,7 @@ def stellar_zh(out):
     return "\n".join(lines)
 
 def pytest_zh(s):
+    if "No module named pytest" in s: return "运行失败：环境里没装 pytest"
     s = tail(s)
     for a, b in [("passed", "通过"), ("failed", "失败"), ("skipped", "跳过"), ("warnings", "警告"), ("warning", "警告"), ("errors", "错误"), ("error", "错误"), (", ", "，"), (" in ", "，耗时 ")]:
         s = s.replace(a, b)
@@ -93,6 +94,7 @@ def do_stellar(chat, args):
     if system not in SYSTEMS: return send(chat, f"未知星系 {system}。可选：{', '.join(SYSTEMS)}")
     png = f"{WORK}/stellar_{system}.png"
     code, out = sh(f"python -m stellar_predictor.cli analyze --system {system} --plot {png}", cwd=f"{WORK}/STELLAR-PREDICTOR")
+    if code != 0: return send(chat, f"❌ STELLAR 运行失败（退出码 {code}）。最后的错误：\n{tail(out, 3)}")
     send(chat, f"🪐 STELLAR · {system}\n\n" + stellar_zh(out))
     if os.path.exists(png): send_file(chat, png, "photo", f"{system} 轨道图 + Titius–Bode 拟合")
 
