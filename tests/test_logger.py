@@ -69,7 +69,9 @@ def test_logger_supports_single_agent_header(tmp_path):
         total_duration_ms=0,
     )
     logger.log_session_metadata(session)
-    assert "Nova (m, )" in open(logger._md_path, encoding="utf-8").read()
+    header = open(logger._md_path, encoding="utf-8").read()
+    assert "Nova (m)" in header
+    assert "()" not in header and "(m, )" not in header
 
 
 def test_sessions_started_in_same_second_get_distinct_logs(tmp_path, monkeypatch):

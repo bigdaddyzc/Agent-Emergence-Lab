@@ -19,9 +19,16 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from src.agent import Agent, AgentConfig
+from src.agent import TOPIC_SWITCH_NOTE, Agent, AgentConfig
+from src.anti_repetition import RepetitionGuard, anti_repetition_settings
 from src.config_validator import ConfigValidationError, validate_config
-from src.evaluator import ConceptTracker, DialogueQualityEvaluator, EmergenceSignalEvaluator
+from src.evaluator import (
+    ConceptTracker,
+    DialogueQualityEvaluator,
+    EmergenceSignalEvaluator,
+    build_reference_ngrams,
+    drop_echo_lines,
+)
 from src.logger import Logger, TurnLog, SessionLog
 from src.memory import MemorySystem
 from src.model_roles import required_runtime_models
@@ -124,6 +131,89 @@ def init_feishu(config: dict) -> tuple:
     )
 
 
+def build_agents(config: dict, client) -> tuple[Agent, Agent]:
+    """Create both agents, wiring in the config-wide repeat_penalty."""
+    default_penalty = anti_repetition_settings(config).get("repeat_penalty")
+    agents = config["agents"]
+    agent_a = Agent(AgentConfig(**agents["agent_a"]), agents["agent_b"]["name"], client,
+                    default_repeat_penalty=default_penalty)
+    agent_b = Agent(AgentConfig(**agents["agent_b"]), agents["agent_a"]["name"], client,
+                    default_repeat_penalty=default_penalty)
+    return agent_a, agent_b
+
+
+def _agent_turn(agent: Agent, *, turn: int, history: list[dict], memories: list,
+                compressed_summary: str, topic_note: str, memory: MemorySystem,
+                logger_inst: Logger, guard: RepetitionGuard, evaluator,
+                quality_evaluator, concept_tracker, current_topic: str,
+                echo_refs, strip_echo: bool, feishu=None, **turn_kwargs):
+    """One utterance: build messages, generate, store, log, score.
+
+    Returns ``(response, stats, refs, verdict)`` or ``None`` when the model call
+    failed. Only the model's own (echo-cleaned) words enter shared history.
+    """
+    nudge = guard.take_nudge()
+    messages = agent.build_messages(
+        conversation_history=history, memories=memories,
+        compressed_summary=compressed_summary, nudge=nudge,
+        topic_note=topic_note, **turn_kwargs,
+    )
+    try:
+        raw, stats = agent.think(messages)
+    except Exception as e:  # noqa: BLE001 - surface any model failure and stop cleanly
+        logger.error("Agent %s failed: %s", agent.name, e)
+        print(f"\n  ❌ {agent.name} 出错: {e}")
+        return None
+
+    response = drop_echo_lines(raw, echo_refs) if strip_echo else raw
+    verdict = guard.observe(response)
+    refs = agent.extract_references(response)
+    memory.add_turn(agent.name, response, stats.tokens_generated, turn)
+    memory.update_prompt_tokens(stats.tokens_prompt)
+
+    logger_inst.log_turn(TurnLog(
+        session_id=logger_inst.session_id, turn_number=turn,
+        agent_name=agent.name, agent_role=agent.role,
+        model=agent.config.model, temperature=agent.config.temperature,
+        content=response, token_count_prompt=stats.tokens_prompt,
+        token_count_response=stats.tokens_generated,
+        duration_ms=stats.total_duration_ms,
+        tokens_per_second=stats.tokens_per_second,
+        memory_count=len(memories),
+        timestamp=datetime.datetime.now().isoformat(),
+        repetition_score=verdict.score,
+        raw_content=raw if raw != response else None,
+        nudged=bool(nudge),
+    ))
+    _print_turn_complete(agent.name, response, stats.tokens_generated)
+    if nudge:
+        logger_inst.log_metric(f"repetition_nudge_{agent.name.lower()}", 1, turn)
+
+    concept_events = concept_tracker.observe(response, turn_number=turn, agent_name=agent.name)
+    if concept_events:
+        logger_inst.log_metric("concept_events", len(concept_events), turn)
+    signals, _echo = evaluator.evaluate_clean(raw, echo_refs)
+    signals = signals.as_dict()
+    for signal_name, signal_value in signals.items():
+        if signal_value > 0:
+            logger_inst.log_metric(f"{signal_name}_{agent.name.lower()}", signal_value, turn)
+    quality = quality_evaluator.evaluate(
+        agent_name=agent.name, text=response, topic=current_topic, signal_counts=signals)
+    for metric_name, metric_value in quality.items():
+        if metric_value > 0:
+            logger_inst.log_metric(f"{metric_name}_{agent.name.lower()}", metric_value, turn)
+
+    if feishu:
+        feishu.send_message(
+            f"🗣 {agent.name} · 第 {turn + 1} 轮\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{response}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚡ {stats.tokens_generated} tokens"
+        )
+    return response, stats, refs, verdict
+
+
 # ── Conversation Loop ────────────────────────────────────────────────────
 
 def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
@@ -180,6 +270,12 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
     meta_reflection_interval = config.get("memory", {}).get(
         "metacognitive_reflection_interval", 6)
 
+    guard = RepetitionGuard(config)
+    echo_refs = build_reference_ngrams(
+        agent_a.instruction_corpus() + agent_b.instruction_corpus() + list(depth_labels or []))
+    strip_echo = config.get("prompt", {}).get("strip_instruction_echo", True)
+    pending_topic_note = ""
+
     turn = 0
     while True:
         if _stop_event.is_set():
@@ -205,157 +301,71 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
         last_content = history[-1]["content"] if history else topic
         memories_result = memory.retrieve_relevant(last_content, current_topic=current_topic)
         memories = memories_result[0]
-        depth_info = memories_result[1] if len(memories_result) > 1 else {}
-
-        context = agent_a.build_context(
-            conversation_history=history, memories=memories,
-            compressed_summary=compressed_summary,
+        turn_kwargs = dict(
             depth_level=depth_level,
             depth_label=depth_labels[depth_level - 1] if depth_labels else "",
-            refs_last_turn=max(consecutive_low_refs + 1, 1),
             consecutive_low_refs=consecutive_low_refs,
-            turns_at_current_depth=turns_at_current_depth,
-            turns_per_depth=turns_per_depth,
             transition_to_next_depth=transition_to_next,
             meta_reflection_due=meta_due,
         )
         _print_turn_start(agent_a.name, turn, is_first_in_round=True)
-
-        try:
-            response_a, stats_a = agent_a.think(context)
-        except Exception as e:
-            logger.error("Agent %s failed: %s", agent_a.name, e)
-            print(f"\n  ❌ {agent_a.name} 出错: {e}")
+        outcome_a = _agent_turn(
+            agent_a, turn=turn, history=history, memories=memories,
+            compressed_summary=compressed_summary, topic_note=pending_topic_note,
+            memory=memory, logger_inst=logger_inst, guard=guard,
+            evaluator=evaluator, quality_evaluator=quality_evaluator,
+            concept_tracker=concept_tracker, current_topic=current_topic,
+            echo_refs=echo_refs, strip_echo=strip_echo, feishu=feishu_a,
+            **turn_kwargs,
+        )
+        if outcome_a is None:
             break
-
-        refs_a = agent_a.extract_references(response_a)
+        pending_topic_note = ""
+        response_a, stats_a, refs_a, verdict_a = outcome_a
         total_refs += refs_a
-        memory.add_turn(agent_a.name, response_a, stats_a.tokens_generated, turn)
-        memory.update_prompt_tokens(stats_a.tokens_prompt)
-
-        logger_inst.log_turn(TurnLog(
-            session_id=logger_inst.session_id, turn_number=turn,
-            agent_name=agent_a.name, agent_role=agent_a.role,
-            model=agent_a.config.model, temperature=agent_a.config.temperature,
-            content=response_a, token_count_prompt=stats_a.tokens_prompt,
-            token_count_response=stats_a.tokens_generated,
-            duration_ms=stats_a.total_duration_ms,
-            tokens_per_second=stats_a.tokens_per_second,
-            memory_count=len(memories),
-            timestamp=datetime.datetime.now().isoformat(),
-        ))
         total_tokens += stats_a.tokens_generated
         total_duration_ms += stats_a.total_duration_ms
-        _print_turn_complete(agent_a.name, response_a,
-                             stats_a.tokens_generated)
-
-        # ── Emergence signal tracking (Agent A) ──
-        concept_events_a = concept_tracker.observe(
-            response_a, turn_number=turn, agent_name=agent_a.name)
-        if concept_events_a:
-            logger_inst.log_metric("concept_events", len(concept_events_a), turn)
-        signals_a = evaluator.evaluate_dict(response_a)
-        for signal_name, signal_value in signals_a.items():
-            if signal_value > 0:
-                logger_inst.log_metric(
-                    f"{signal_name}_{agent_a.name.lower()}",
-                    signal_value, turn,
-                )
-        quality_a = quality_evaluator.evaluate(
-            agent_name=agent_a.name, text=response_a,
-            topic=current_topic, signal_counts=signals_a)
-        for metric_name, metric_value in quality_a.items():
-            if metric_value > 0:
-                logger_inst.log_metric(f"{metric_name}_{agent_a.name.lower()}", metric_value, turn)
-
-        if feishu_a:
-            feishu_a.send_message(
-                f"🗣 {agent_a.name} · 第 {turn + 1} 轮\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"{response_a}\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚡ {stats_a.tokens_generated} tokens"
-            )
 
         if _stop_event.is_set():
             break
-
-        # ── Agent B ──
-        compressed_summary, history = memory.get_compressed_context()
-        memories_result_b = memory.retrieve_relevant(response_a, current_topic=current_topic)
-        memories_b = memories_result_b[0]
-
-        context = agent_b.build_context(
-            conversation_history=history, memories=memories_b,
-            compressed_summary=compressed_summary,
-            depth_level=depth_level,
-            depth_label=depth_labels[depth_level - 1] if depth_labels else "",
-            refs_last_turn=refs_a,
-            consecutive_low_refs=consecutive_low_refs,
-            turns_at_current_depth=turns_at_current_depth,
-            turns_per_depth=turns_per_depth,
-            transition_to_next_depth=transition_to_next,
-            meta_reflection_due=meta_due,
-        )
-        _print_turn_start(agent_b.name, turn, is_first_in_round=False)
-
-        try:
-            response_b, stats_b = agent_b.think(context)
-        except Exception as e:
-            logger.error("Agent %s failed: %s", agent_b.name, e)
-            print(f"\n  ❌ {agent_b.name} 出错: {e}")
+        if verdict_a.end_session:
+            print("\n  🔁 连续重复过多，提前结束对话。")
+            logger_inst.log_metric("ended_early_repetition", 1, turn)
+            completed_turns = turn
             break
 
-        refs_b = agent_b.extract_references(response_b)
-        total_refs += refs_b
-        memory.add_turn(agent_b.name, response_b, stats_b.tokens_generated, turn)
-        memory.update_prompt_tokens(stats_b.tokens_prompt)
-
-        logger_inst.log_turn(TurnLog(
-            session_id=logger_inst.session_id, turn_number=turn,
-            agent_name=agent_b.name, agent_role=agent_b.role,
-            model=agent_b.config.model, temperature=agent_b.config.temperature,
-            content=response_b, token_count_prompt=stats_b.tokens_prompt,
-            token_count_response=stats_b.tokens_generated,
-            duration_ms=stats_b.total_duration_ms,
-            tokens_per_second=stats_b.tokens_per_second,
-            memory_count=len(memories_b),
-            timestamp=datetime.datetime.now().isoformat(),
-        ))
-        total_tokens += stats_b.tokens_generated
-        total_duration_ms += stats_b.total_duration_ms
-        _print_turn_complete(agent_b.name, response_b,
-                             stats_b.tokens_generated)
-
-        # ── Emergence signal tracking (Agent B) ──
-        concept_events_b = concept_tracker.observe(
-            response_b, turn_number=turn, agent_name=agent_b.name)
-        if concept_events_b:
-            logger_inst.log_metric("concept_events", len(concept_events_b), turn)
-        signals_b = evaluator.evaluate_dict(response_b)
-        for signal_name, signal_value in signals_b.items():
-            if signal_value > 0:
-                logger_inst.log_metric(
-                    f"{signal_name}_{agent_b.name.lower()}",
-                    signal_value, turn,
-                )
-        quality_b = quality_evaluator.evaluate(
-            agent_name=agent_b.name, text=response_b,
-            topic=current_topic, signal_counts=signals_b)
-        for metric_name, metric_value in quality_b.items():
-            if metric_value > 0:
-                logger_inst.log_metric(f"{metric_name}_{agent_b.name.lower()}", metric_value, turn)
-
-        if feishu_b:
-            feishu_b.send_message(
-                f"🗣 {agent_b.name} · 第 {turn + 1} 轮\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"{response_b}\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⚡ {stats_b.tokens_generated} tokens"
+        # ── Agent B ──  (skipped when anti_repetition.action == end_round fired)
+        response_b, refs_b = "", 0
+        verdict_b = None
+        if verdict_a.end_round:
+            print("\n  🔁 重复度过高，本轮提前结束。")
+            logger_inst.log_metric("round_ended_early_repetition", 1, turn)
+        else:
+            compressed_summary, history = memory.get_compressed_context()
+            memories_result_b = memory.retrieve_relevant(response_a, current_topic=current_topic)
+            memories_b = memories_result_b[0]
+            _print_turn_start(agent_b.name, turn, is_first_in_round=False)
+            outcome_b = _agent_turn(
+                agent_b, turn=turn, history=history, memories=memories_b,
+                compressed_summary=compressed_summary, topic_note="",
+                memory=memory, logger_inst=logger_inst, guard=guard,
+                evaluator=evaluator, quality_evaluator=quality_evaluator,
+                concept_tracker=concept_tracker, current_topic=current_topic,
+                echo_refs=echo_refs, strip_echo=strip_echo, feishu=feishu_b,
+                **turn_kwargs,
             )
+            if outcome_b is None:
+                break
+            response_b, stats_b, refs_b, verdict_b = outcome_b
+            total_refs += refs_b
+            total_tokens += stats_b.tokens_generated
+            total_duration_ms += stats_b.total_duration_ms
 
         completed_turns = turn + 1
+        if verdict_b is not None and verdict_b.end_session:
+            print("\n  🔁 连续重复过多，提前结束对话。")
+            logger_inst.log_metric("ended_early_repetition", 1, turn)
+            break
 
         # ── Context compression (triggered when approaching context window limit) ──
         if memory.should_compress():
@@ -366,6 +376,8 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
         if memory.should_extract(turn) and config["memory"]["long_term_enabled"]:
             new_memories = []
             for text, source in [(response_a, agent_a.name), (response_b, agent_b.name)]:
+                if not text:
+                    continue
                 extracted = memory.extract_memories(text, source, turn, topic=current_topic)
                 memory.long_term.extend(extracted)
                 new_memories.extend(extracted)
@@ -445,13 +457,9 @@ def run_conversation(config: dict, agent_a: Agent, agent_b: Agent,
             agent_a.compile_system_prompt(current_topic)
             agent_b.compile_system_prompt(current_topic)
 
-            memory.short_term.append({
-                "agent": agent_b.name if turn % 2 == 0 else agent_a.name,
-                "content": f"诶换个话题，我在想——{current_topic}",
-                "token_count": 0,
-                "turn_number": turn,
-                "timestamp": time.time(),
-            })
+            # The switch is announced in the next speaker's system message,
+            # not as a fake utterance in the shared history.
+            pending_topic_note = TOPIC_SWITCH_NOTE.format(topic=current_topic)
             logger_inst.log_metric("topic_switch", topic_switch_count, turn)
 
         turn += 1
@@ -521,10 +529,7 @@ def main():
         args.topic = TopicManager(config, ollama_client).initial_topic()
         print(f"  今日话题：{args.topic}\n")
 
-    agent_a = Agent(AgentConfig(**config["agents"]["agent_a"]),
-                    config["agents"]["agent_b"]["name"], ollama_client)
-    agent_b = Agent(AgentConfig(**config["agents"]["agent_b"]),
-                    config["agents"]["agent_a"]["name"], ollama_client)
+    agent_a, agent_b = build_agents(config, ollama_client)
     memory = MemorySystem(config, ollama_client)
     logger_inst = Logger(config)
 
