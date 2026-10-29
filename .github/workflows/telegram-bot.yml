@@ -27,7 +27,7 @@ jobs:
           git clone -q --depth 1 https://github.com/bigdaddyzc/Agent-Emergence-Lab.git
           git clone -q --depth 1 https://github.com/bigdaddyzc/STELLAR-PREDICTOR.git
           pip install -q -r Agent-Emergence-Lab/requirements.txt pytest
-          pip install -q -e STELLAR-PREDICTOR pytest
+          pip install -q -e "STELLAR-PREDICTOR[dev]" pytest fastapi httpx pydantic uvicorn jinja2 python-multipart
       - name: Set up Ollama (only for /ael)
         if: steps.peek.outputs.count != '0'
         env: { TG_TOKEN: "${{ secrets.TG_TOKEN }}" }
