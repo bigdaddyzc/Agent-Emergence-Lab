@@ -157,3 +157,9 @@ class TestCompileSystemPrompt:
         prompt = agent.compile_system_prompt("恐怖片")
         assert "Riven" in prompt
         assert "恐怖片" in prompt
+
+
+def test_clean_response_strips_invented_speaker_labels():
+    agent = _make_agent()
+    assert agent.clean_response("你：记忆像河流\n我: 也像仓库") == "记忆像河流\n也像仓库"
+    assert agent.clean_response("你说得对：记忆像河流") == "你说得对：记忆像河流"

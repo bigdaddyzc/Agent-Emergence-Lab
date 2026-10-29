@@ -205,6 +205,26 @@ emergence:
     - "disagree"
     - "however"
 
+# Keep the model's copied instruction lines out of the shared history.
+prompt:
+  strip_instruction_echo: true
+
+anti_repetition:
+  enabled: true
+  repeat_penalty: 1.12     # sent to Ollama for every agent without its own repeat_penalty
+  threshold: 0.6           # per-utterance repetition score that counts as repetitive
+  action: nudge            # nudge | end_round | none
+  max_consecutive: 3       # end the session after N repetitive utterances in a row (0 = never)
+  window: 4                # compare against the last N utterances
+
+evaluation:
+  repetition_weight: 1.0   # overall_score = signals_per_utterance * (1 - w * repetition)
+  llm_judge:
+    enabled: false         # optional LLM-as-judge; calibrate with scripts/human_calibration.py
+    model: ""              # empty = model_roles.judge_model, then agent_a's model
+    max_utterances: 6
+    temperature: 0.0
+
 logging:
   base_dir: "logs"
   conversation_dir: "logs/conversations"

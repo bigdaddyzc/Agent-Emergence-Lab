@@ -213,7 +213,7 @@ def test_single_agent_sees_its_full_history(tmp_path):
     original = client.chat
 
     def spy(model, messages, **kwargs):
-        seen.append(messages[-1]["content"])
+        seen.append("\n".join(m["content"] for m in messages if m["role"] != "system"))
         return original(model, messages, **kwargs)
 
     client.chat = spy

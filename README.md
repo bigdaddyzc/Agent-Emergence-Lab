@@ -232,6 +232,62 @@ challenges, reasoning steps, repetition vs the previous utterance, and drift fro
 > The scores are regex heuristics, not proof of emergence. Use several topics and
 > `--runs ≥ 3`, and read the transcripts before trusting a gap.
 
+#### Evaluation v2: echo-free signals, repetition penalty, significance
+
+- **Template echo does not score.** Small models often copy the instructions
+  ("先提到对方刚说的一个具体观点", "【步骤1】"). Before counting signals, every span that
+  shares a 6-character n-gram with the instruction corpus (system prompts + all turn
+  instructions; the topic itself is excluded) is removed, and repeated sentences /
+  empty or duplicated reasoning steps are collapsed. `signals_per_utterance` is this clean
+  count; the old count is kept as `raw_signals_per_utterance`, and `template_echo_ratio`
+  reports how much of the output was copied.
+- **Repetition is a penalty.** `repetition_mean` (overlap with the previous utterance),
+  `self_repetition_mean` (loops inside one utterance) and `repetition_combined_mean`
+  (per-utterance max of both). The headline metric is
+  `overall_score = signals_per_utterance × (1 − w × repetition_combined_mean)`
+  (`evaluation.repetition_weight`, default 1).
+- **Optional LLM judge** (off by default): `--judge` or `--judge-model qwen2.5:3b`, or
+  `evaluation.llm_judge` in config. Rates sampled utterances 1–5 on novelty,
+  responsiveness, coherence and non-repetition → `judge_score`.
+- **Human calibration:** `python3 scripts/human_calibration.py export logs/experiments/latest.json --n 30`
+  writes a blind CSV (mode kept in a separate key file); fill in `human_score` (1–5,
+  optionally `human_score_2` for a second rater), then
+  `python3 scripts/human_calibration.py report logs/calibration/labels.csv` prints the
+  Spearman correlation of human vs `auto_score` / `judge_score` and inter-rater agreement.
+- **Several topics × runs + significance:** `--topics A B C` and/or `--topics-file topics.txt`
+  (one per line). The report adds a significance table vs the baseline (Welch's t-test via
+  scipy when installed, Mann–Whitney p in the JSON; otherwise an exact/Monte-Carlo
+  permutation test in pure Python) with Cliff's δ as effect size. With one session per mode
+  it says plainly that no test is possible.
+
+#### Prompt hygiene and anti-repetition
+
+- Instructions, depth hints, memories and summaries go **only in the system message**; the
+  conversation is passed as real chat turns (own turns = `assistant`, partner = `user`).
+  Mode descriptions (e.g. "single-agent baseline") are never shown to the model, topic
+  switches are announced in the system message instead of a fake utterance, and lines in a
+  reply that mostly copy the instructions are dropped before the reply enters the shared
+  history (`prompt.strip_instruction_echo`; the raw output stays in the JSONL as `raw_content`
+  and is what gets scored).
+- `anti_repetition.repeat_penalty` (or per-agent `repeat_penalty`) is sent to Ollama.
+  After each utterance a repetition score is computed; above `anti_repetition.threshold`
+  the next speaker gets a "change angle" nudge in its system message (`action: nudge`), or
+  the round ends early (`action: end_round`); `max_consecutive` repetitive utterances in a
+  row end the session.
+- Markdown logs show one `## Round N` header per round, `### #k Name (role)` per utterance
+  (no empty `()`), and the per-utterance repetition score.
+
+#### Recommended settings
+
+The 0.5B/1B models in `configs/low_resource_4g.yaml` are for smoke tests: they copy
+instructions and loop, and any metric gap between modes is mostly noise. For results worth
+reading use **3B+ models** (e.g. `qwen2.5:3b` + `llama3.2:3b`, as in `config.yaml`) and
+**≥ 3 topics × ≥ 5 runs** with **≥ 6 rounds** per session:
+
+```bash
+python3 -m src.experiment --config config.yaml --topics-file configs/topics_example.txt --runs 5 --turns 6
+```
+
 ---
 
 ## Project Structure
@@ -248,10 +304,14 @@ Agent-Emergence-Lab/
 │   ├── logger.py        # JSONL / Markdown / snapshot logging
 │   ├── ollama_client.py # Ollama HTTP API wrapper
 │   ├── evaluator.py     # Heuristic emergence signals & dialogue quality
-│   ├── experiment.py    # Baseline/control experiments + comparison report
+│   ├── experiment.py    # Baseline/control experiments (topics × runs) + comparison report
+│   ├── anti_repetition.py # Runtime repetition guard (nudge / end round / end session)
+│   ├── stats.py         # Welch t / Mann–Whitney (scipy) or permutation test
+│   ├── llm_judge.py     # Optional LLM-as-judge scoring (off by default)
 │   ├── config_validator.py # Config checks run at startup
 │   └── feishu.py        # Optional Feishu/Lark webhook integration
-├── scripts/             # Session analysis, reports, model benchmark, experiment comparison
+├── scripts/             # Session analysis, reports, model benchmark, experiment comparison,
+│                        # human_calibration.py (blind labelling + agreement report)
 ├── .github/workflows/   # CI: pytest on Python 3.11
 └── tests/               # Unit tests (pytest, fake Ollama client — no server needed)
 ```
@@ -426,5 +486,27 @@ python3 scripts/compare_experiments.py logs/experiments/latest.json --config con
 结果写入 `logs/experiments/latest.json`（清单 + 每场得分）和 `logs/experiments/latest.md`（各模式均值 ± 标准差，以及相对基线的 `signals_per_utterance` 倍数）。
 
 > 这些分数是基于正则的启发式信号，不是涌现的证明。请用多个话题、`--runs ≥ 3`，并在相信差距之前读一读对话原文。
+
+**评估 v2：去掉模板复述、重复惩罚、显著性检验**
+
+- **复述提示词不再得分。** 小模型常把指令原样抄进回答（"先提到对方刚说的一个具体观点"、"【步骤1】"）。计数前先删除与指令语料（系统提示 + 各轮指令，不含话题本身）共享 6 字 n-gram 的片段，并合并重复句子和空的/重复的推理步骤。`signals_per_utterance` 是清洗后的计数，旧计数保留为 `raw_signals_per_utterance`，`template_echo_ratio` 表示输出中有多少是抄的。
+- **重复作为惩罚。** `repetition_mean`（与上一句的重合）、`self_repetition_mean`（单句内部打转）、`repetition_combined_mean`（两者逐句取最大）。总分 `overall_score = signals_per_utterance × (1 − w × repetition_combined_mean)`（`evaluation.repetition_weight`，默认 1）。
+- **可选 LLM 评审**（默认关闭）：`--judge` 或 `--judge-model qwen2.5:3b`，或在配置 `evaluation.llm_judge` 中开启；对抽样发言按新颖性、回应性、连贯性、不重复打 1–5 分 → `judge_score`。
+- **人工校准：** `python3 scripts/human_calibration.py export logs/experiments/latest.json --n 30` 导出盲评 CSV（模式写在单独的 key 文件里）；填写 `human_score`（1–5，可选第二位评分者 `human_score_2`）后运行 `python3 scripts/human_calibration.py report logs/calibration/labels.csv`，输出人工分与 `auto_score` / `judge_score` 的 Spearman 相关以及评分者间一致性。
+- **多话题 × 多次运行 + 显著性：** `--topics A B C` 和/或 `--topics-file topics.txt`（每行一个）。报告新增相对基线的显著性表（装了 scipy 用 Welch t 检验，JSON 中附 Mann–Whitney p；否则用纯 Python 精确/蒙特卡洛置换检验），并给出 Cliff's δ 效应量。每个模式只有一场时会明确说明无法检验。
+
+**提示词卫生与防重复**
+
+- 指令、深度提示、记忆和摘要**只放在 system 消息**里；对话历史以真实的聊天轮次传入（自己说的是 `assistant`，对方说的是 `user`）。模式描述（如 "single-agent baseline"）不再出现在提示中；换话题通过 system 消息告知，不再伪造一句发言；回答中主要在抄指令的行在进入共享历史前被删除（`prompt.strip_instruction_echo`；原始输出保存在 JSONL 的 `raw_content` 中，打分用的是原始输出）。
+- `anti_repetition.repeat_penalty`（或单个 agent 的 `repeat_penalty`）会传给 Ollama。每句发言后计算重复度，超过 `anti_repetition.threshold` 时，下一位发言者的 system 消息里会加入“换个角度”的提醒（`action: nudge`），或提前结束本轮（`action: end_round`）；连续 `max_consecutive` 句重复则提前结束对话。
+- Markdown 日志每轮一个 `## Round N` 标题，每句发言 `### #k 名字 (角色)`（不再有空的 `()`），并显示逐句重复度。
+
+**推荐设置**
+
+`configs/low_resource_4g.yaml` 里的 0.5B/1B 模型只适合冒烟测试：它们会抄指令、会打转，模式之间的差距大多是噪声。想得到值得看的结果，请用 **3B 及以上模型**（如 `config.yaml` 中的 `qwen2.5:3b` + `llama3.2:3b`），**至少 3 个话题 × 每个 5 次运行**，每场 **≥ 6 轮**：
+
+```bash
+python3 -m src.experiment --config config.yaml --topics-file configs/topics_example.txt --runs 5 --turns 6
+```
 
 **运行测试：** `python3 -m pytest -q`（使用假的 Ollama 客户端，无需启动 Ollama；CI 在 Python 3.11 上自动运行）。

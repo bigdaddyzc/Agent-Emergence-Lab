@@ -26,6 +26,10 @@ class TurnLog:
     tokens_per_second: float
     memory_count: int
     timestamp: str
+    # Optional per-utterance diagnostics (None = not computed).
+    repetition_score: Optional[float] = None
+    raw_content: Optional[str] = None   # model output before echo cleanup, when different
+    nudged: bool = False                # a change-angle nudge was in this turn's system message
 
 
 @dataclass
@@ -58,6 +62,8 @@ class Logger:
         self.conv_dir = config["logging"]["conversation_dir"]
         self.mem_dir = config["logging"]["memory_dir"]
         self._metrics: list[MetricLog] = []
+        self._last_md_round: Optional[int] = None
+        self._utterance_count = 0
 
         os.makedirs(self.conv_dir, exist_ok=True)
         os.makedirs(self.mem_dir, exist_ok=True)
@@ -146,9 +152,15 @@ class Logger:
             f.write(json.dumps(data, ensure_ascii=False) + "\n")
             f.write(existing)
 
+    @staticmethod
+    def _speaker_label(name: str, *details: str) -> str:
+        """``Nova (qwen2.5:0.5b, critic)``; empty details are left out (no ``()``)."""
+        shown = [d for d in details if d]
+        return f"{name} ({', '.join(shown)})" if shown else name
+
     def _write_md_header(self, session: SessionLog) -> None:
         agents = " x ".join(
-            f"{a.get('name', '?')} ({a.get('model', '?')}, {a.get('role', '')})"
+            self._speaker_label(a.get("name", "?"), a.get("model", ""), a.get("role", ""))
             for a in session.agents
         )
         lines = [
@@ -166,20 +178,28 @@ class Logger:
 
     def _append_md_turn(self, turn: TurnLog) -> None:
         time_str = turn.timestamp.split("T")[1][:8] if "T" in turn.timestamp else ""
-        lines = [
-            f"## Turn {turn.turn_number + 1}",
-            "",
-            f"### {turn.agent_name} ({turn.agent_role}) - {time_str}",
-            "",
-            turn.content,
-            "",
-            f"*({turn.token_count_response} tokens, "
-            f"{turn.tokens_per_second} tok/s, "
-            f"{turn.memory_count} memories injected)*",
-            "",
-            "---",
-            "",
-        ]
+        self._utterance_count += 1
+        lines = []
+        # One "Round" header per round; each utterance gets its own sub-header,
+        # so two speakers in the same round no longer produce duplicate headers.
+        if turn.turn_number != self._last_md_round:
+            lines += [f"## Round {turn.turn_number + 1}", ""]
+            self._last_md_round = turn.turn_number
+        speaker = self._speaker_label(turn.agent_name, turn.agent_role)
+        heading = f"### #{self._utterance_count} {speaker}"
+        if time_str:
+            heading += f" - {time_str}"
+        stats = (f"{turn.token_count_response} tokens, {turn.tokens_per_second} tok/s, "
+                 f"{turn.memory_count} memories injected")
+        if turn.repetition_score is not None:
+            stats += f", repetition {turn.repetition_score:.2f}"
+        if turn.nudged:
+            stats += ", change-angle nudge"
+        lines += [heading, "", turn.content, "", f"*({stats})*", ""]
+        if turn.raw_content and turn.raw_content != turn.content:
+            lines += ["<details><summary>raw model output (before echo cleanup)</summary>", "",
+                      turn.raw_content, "", "</details>", ""]
+        lines += ["---", ""]
         with open(self._md_path, "a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
 
