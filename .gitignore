@@ -13,3 +13,5 @@ venv/
 generated/
 logs/
 .claude/
+
+*.bak

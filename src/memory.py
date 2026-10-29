@@ -649,7 +649,7 @@ class MemorySystem:
         keywords.extend(eng_keywords)
 
         # Chinese: jieba word segmentation
-        chn_text = re.sub(r'[a-zA-Z0-9\s\'\"，。！？、；：""''（）【】《》…—\-\n]+', '', text)
+        chn_text = re.sub(r"[a-zA-Z0-9\s'\"，。！？、；：“”‘’（）【】《》…—\-]+", '', text)
         if chn_text.strip():
             import jieba
             tokens = jieba.lcut(chn_text)
