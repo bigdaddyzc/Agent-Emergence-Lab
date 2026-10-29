@@ -1,0 +1,47 @@
+name: telegram-bot
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # GitHub 实际间隔常为 5–15 分钟
+  workflow_dispatch:
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for messages
+        id: peek
+        env: { TG_TOKEN: "${{ secrets.TG_TOKEN }}" }
+        run: |
+          n=$(curl -s "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?timeout=0" | python -c "import sys,json;print(len(json.load(sys.stdin).get('result',[])))")
+          echo "count=$n" >> "$GITHUB_OUTPUT"; echo "pending messages: $n"
+      - uses: actions/setup-python@v5
+        if: steps.peek.outputs.count != '0'
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: "**/requirements*.txt" }
+      - name: Set up projects
+        if: steps.peek.outputs.count != '0'
+        run: |
+          git clone -q --depth 1 https://github.com/bigdaddyzc/Agent-Emergence-Lab.git
+          git clone -q --depth 1 https://github.com/bigdaddyzc/STELLAR-PREDICTOR.git
+          pip install -q -r Agent-Emergence-Lab/requirements.txt pytest
+          pip install -q -e STELLAR-PREDICTOR pytest
+      - name: Set up Ollama (only for /ael)
+        if: steps.peek.outputs.count != '0'
+        env: { TG_TOKEN: "${{ secrets.TG_TOKEN }}" }
+        run: |
+          if curl -s "https://api.telegram.org/bot${TG_TOKEN}/getUpdates?timeout=0" | grep -q '"/ael'; then
+            curl -fsSL https://ollama.com/install.sh | sh
+            (ollama serve > /tmp/ollama.log 2>&1 &) ; sleep 5
+            ollama pull qwen2.5:0.5b && ollama pull llama3.2:1b
+          fi
+      - name: Run bot
+        if: steps.peek.outputs.count != '0'
+        env:
+          TG_TOKEN: "${{ secrets.TG_TOKEN }}"
+          TG_ALLOWED_CHAT: "${{ secrets.TG_ALLOWED_CHAT }}"
+          WORK: "${{ github.workspace }}"
+          MPLBACKEND: Agg
+        run: python bot/bot.py
