@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 
+# The conversation loop advances through depth levels 1..5 and indexes
+# memory.depth_labels[depth_level - 1], so at least five labels are required.
+MAX_DEPTH_LEVEL = 5
+_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
 class ConfigValidationError(ValueError):
     """Raised when config.yaml is missing required fields or has invalid values."""
 
@@ -49,8 +55,20 @@ def _validate_agent(agent: dict, path: str) -> None:
         raise ConfigValidationError(f"{path}.name must be a non-empty string")
     if not isinstance(agent["model"], str) or not agent["model"].strip():
         raise ConfigValidationError(f"{path}.model must be a non-empty string")
-    if "{topic}" not in agent["system_prompt_template"]:
+    template = agent["system_prompt_template"]
+    if not isinstance(template, str):
+        raise ConfigValidationError(f"{path}.system_prompt_template must be a string")
+    if "{topic}" not in template:
         raise ConfigValidationError(f"{path}.system_prompt_template must include {{topic}}")
+    # Agent.compile_system_prompt() calls str.format(partner_name=..., topic=...);
+    # any other placeholder (or a stray "{") would crash the first turn.
+    try:
+        template.format(partner_name="", topic="")
+    except (KeyError, IndexError, ValueError) as e:
+        raise ConfigValidationError(
+            f"{path}.system_prompt_template may only use {{topic}} and {{partner_name}} "
+            f"placeholders (escape literal braces as {{{{ }}}}): {e!r}"
+        ) from e
     _range(agent["temperature"], f"{path}.temperature", 0.0, 2.0)
     _int_min(agent["max_tokens"], f"{path}.max_tokens", 1)
     _int_min(agent["context_window"], f"{path}.context_window", 512)
@@ -69,6 +87,17 @@ def _validate_memory(memory: dict) -> None:
             _int_min(memory[field], f"memory.{field}", 0 if field == "turns_kept_verbatim" else 1)
     if "long_term_enabled" in memory and not isinstance(memory["long_term_enabled"], bool):
         raise ConfigValidationError("memory.long_term_enabled must be boolean")
+    if "metacognitive_reflection_interval" in memory:
+        # Used as a modulo divisor in the conversation loop: 0 would crash.
+        _int_min(memory["metacognitive_reflection_interval"],
+                 "memory.metacognitive_reflection_interval", 1)
+    if "depth_labels" in memory:
+        labels = memory["depth_labels"]
+        if (not isinstance(labels, list) or len(labels) < MAX_DEPTH_LEVEL
+                or not all(isinstance(item, str) and item for item in labels)):
+            raise ConfigValidationError(
+                f"memory.depth_labels must be a list of at least {MAX_DEPTH_LEVEL} non-empty strings"
+            )
     if "novelty_boost_weight" in memory:
         _range(memory["novelty_boost_weight"], "memory.novelty_boost_weight", 0.0, 2.0)
 
@@ -78,6 +107,8 @@ def _validate_logging(logging_config: dict) -> None:
         _require(logging_config, field, "logging")
         if not isinstance(logging_config[field], str) or not logging_config[field]:
             raise ConfigValidationError(f"logging.{field} must be a non-empty string")
+    if "log_level" in logging_config and logging_config["log_level"] not in _LOG_LEVELS:
+        raise ConfigValidationError(f"logging.log_level must be one of {', '.join(_LOG_LEVELS)}")
 
 
 def _validate_ollama(ollama: dict) -> None:
@@ -130,10 +161,10 @@ def _require(mapping: dict, key: str, path: str) -> None:
 
 
 def _int_min(value, path: str, minimum: int) -> None:
-    if not isinstance(value, int) or value < minimum:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ConfigValidationError(f"{path} must be an integer >= {minimum}")
 
 
 def _range(value, path: str, minimum: float, maximum: float) -> None:
-    if not isinstance(value, (int, float)) or not (minimum <= float(value) <= maximum):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (minimum <= float(value) <= maximum):
         raise ConfigValidationError(f"{path} must be between {minimum} and {maximum}")

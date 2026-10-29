@@ -1,6 +1,9 @@
 """Tests for OllamaClient.generate_topic random-seed topic generation."""
 
-from src.ollama_client import OllamaClient, OllamaResponse
+import pytest
+import requests
+
+from src.ollama_client import OllamaClient, OllamaError, OllamaRequestError, OllamaResponse
 
 
 def _make_client():
@@ -77,3 +80,81 @@ class TestGenerateTopic:
             outputs.append(client.generate_topic(model="test-model"))
         # With 35 domains x random selection, 20 draws should not collapse to one.
         assert len(set(outputs)) > 1
+
+
+# ── HTTP robustness (no network: requests.Session is stubbed) ────────────
+
+
+class _Resp:
+    def __init__(self, status=200, payload=None, text="", bad_json=False):
+        self.status_code = status
+        self._payload = payload
+        self.text = text
+        self._bad_json = bad_json
+
+    def json(self):
+        if self._bad_json:
+            raise ValueError("Expecting value")
+        return self._payload
+
+
+class _Session:
+    def __init__(self, responses=None, exc=None):
+        self.responses = list(responses or [])
+        self.exc = exc
+        self.calls = 0
+
+    def request(self, **kwargs):
+        self.calls += 1
+        if self.exc:
+            raise self.exc
+        return self.responses.pop(0)
+
+    def head(self, url, timeout):
+        if self.exc:
+            raise self.exc
+        return _Resp(200)
+
+
+def _client_with(session):
+    client = _make_client()
+    client.session = session
+    return client
+
+
+def test_chat_invalid_json_raises_ollama_error():
+    client = _client_with(_Session([_Resp(bad_json=True, text="<html>")]))
+    with pytest.raises(OllamaError, match="Invalid JSON"):
+        client.chat("m", [{"role": "user", "content": "hi"}])
+
+
+def test_chat_error_field_in_200_body_raises():
+    client = _client_with(_Session([_Resp(payload={"error": "model failed to load"})]))
+    with pytest.raises(OllamaRequestError, match="model failed to load"):
+        client.chat("m", [])
+
+
+def test_chat_missing_message_returns_empty_text():
+    client = _client_with(_Session([_Resp(payload={"message": None, "eval_count": 3})]))
+    resp = client.chat("m", [])
+    assert resp.text == ""
+    assert resp.tokens_generated == 3
+
+
+def test_list_models_skips_malformed_entries():
+    client = _client_with(_Session([_Resp(payload={"models": [{"name": "a"}, {"size": 1}, "x"]})]))
+    assert client.list_models() == ["a"]
+
+
+def test_is_running_false_on_timeout():
+    client = _client_with(_Session(exc=requests.Timeout("slow")))
+    assert client.is_running() is False
+
+
+def test_generic_request_exception_is_wrapped_after_retries(monkeypatch):
+    monkeypatch.setattr("src.ollama_client.time.sleep", lambda s: None)
+    session = _Session(exc=requests.exceptions.ChunkedEncodingError("dropped"))
+    client = _client_with(session)
+    with pytest.raises(OllamaError, match="dropped"):
+        client.chat("m", [])
+    assert session.calls == 3
