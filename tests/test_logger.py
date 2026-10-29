@@ -70,3 +70,14 @@ def test_logger_supports_single_agent_header(tmp_path):
     )
     logger.log_session_metadata(session)
     assert "Nova (m, )" in open(logger._md_path, encoding="utf-8").read()
+
+
+def test_sessions_started_in_same_second_get_distinct_logs(tmp_path, monkeypatch):
+    monkeypatch.setattr(Logger, "_generate_session_id", lambda self: "emergence_fixed")
+    config = _config(tmp_path)
+    first = Logger(config)
+    first.log_metric("x", 1, 0)
+    second = Logger(config)
+    assert first.session_id == "emergence_fixed"
+    assert second.session_id == "emergence_fixed_2"
+    assert first._jsonl_path != second._jsonl_path

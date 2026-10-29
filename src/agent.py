@@ -71,8 +71,15 @@ class Agent:
                       turns_at_current_depth: int = 0,
                       turns_per_depth: int = 4,
                       transition_to_next_depth: bool = False,
-                      meta_reflection_due: bool = False) -> str:
-        """Build the full input context for this agent's turn."""
+                      meta_reflection_due: bool = False,
+                      truncate_own_turns: bool = True) -> str:
+        """Build the full input context for this agent's turn.
+
+        ``truncate_own_turns`` shortens the agent's own earlier turns to
+        discourage verbatim copying. A monologue baseline must pass False:
+        there every history entry is the agent's own, so truncation would hide
+        almost the whole conversation and unfairly handicap the baseline.
+        """
         parts = []
 
         # Section 1: Shared insights with usage instruction
@@ -101,7 +108,7 @@ class Agent:
                 agent_label = entry.get("agent", "?")
                 content = entry.get("content", "")
                 # Truncate the agent's own prior turns to discourage verbatim copying
-                if agent_label == self.name and len(content) > 80:
+                if truncate_own_turns and agent_label == self.name and len(content) > 80:
                     content = content[:80] + "…（你上一轮说的，以上为摘要）"
                 parts.append(f"  -{agent_label}- {content}")
                 parts.append("")

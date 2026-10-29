@@ -57,13 +57,14 @@ class Logger:
         self.base_dir = config["logging"]["base_dir"]
         self.conv_dir = config["logging"]["conversation_dir"]
         self.mem_dir = config["logging"]["memory_dir"]
-        self.session_id = self._generate_session_id()
-        self._jsonl_path = os.path.join(self.conv_dir, f"{self.session_id}.jsonl")
-        self._md_path = os.path.join(self.conv_dir, f"{self.session_id}.md")
         self._metrics: list[MetricLog] = []
 
         os.makedirs(self.conv_dir, exist_ok=True)
         os.makedirs(self.mem_dir, exist_ok=True)
+
+        self.session_id = self._unique_session_id(self._generate_session_id())
+        self._jsonl_path = os.path.join(self.conv_dir, f"{self.session_id}.jsonl")
+        self._md_path = os.path.join(self.conv_dir, f"{self.session_id}.md")
 
         log_level = getattr(logging, config["logging"].get("log_level", "INFO"))
         logging.basicConfig(
@@ -73,6 +74,18 @@ class Logger:
 
     def _generate_session_id(self) -> str:
         return f"emergence_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def _unique_session_id(self, base: str) -> str:
+        """Avoid two sessions started in the same second sharing one log file.
+
+        Session ids have one-second resolution, so back-to-back experiment runs
+        would otherwise append to (and corrupt) the same JSONL file.
+        """
+        candidate, suffix = base, 2
+        while os.path.exists(os.path.join(self.conv_dir, f"{candidate}.jsonl")):
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
 
     def log_turn(self, turn: TurnLog) -> None:
         """Log a single conversation turn to JSONL and Markdown."""

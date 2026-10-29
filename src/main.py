@@ -20,12 +20,12 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from src.agent import Agent, AgentConfig
-from src.config_validator import validate_config
+from src.config_validator import ConfigValidationError, validate_config
 from src.evaluator import ConceptTracker, DialogueQualityEvaluator, EmergenceSignalEvaluator
 from src.logger import Logger, TurnLog, SessionLog
 from src.memory import MemorySystem
 from src.model_roles import required_runtime_models
-from src.ollama_client import OllamaClient
+from src.ollama_client import OllamaClient, OllamaError
 from src.topic_manager import TopicManager
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,11 @@ def verify_ollama(client, config: dict) -> None:
     if not client.is_running():
         print("错误: Ollama 未运行。请先启动: ollama serve")
         sys.exit(1)
-    models = client.list_models()
+    try:
+        models = client.list_models()
+    except OllamaError as e:
+        print(f"错误: 无法获取 Ollama 模型列表: {e}")
+        sys.exit(1)
     required = required_runtime_models(config)
     for m in required:
         if m not in models:
@@ -494,7 +498,14 @@ def main():
 
     project_root = get_project_root()
     config_path = os.path.join(project_root, args.config)
-    config = load_config(config_path)
+    try:
+        config = load_config(config_path)
+    except FileNotFoundError:
+        print(f"错误: 找不到配置文件 {config_path}")
+        sys.exit(2)
+    except (ConfigValidationError, yaml.YAMLError) as e:
+        print(f"错误: 配置文件无效 ({config_path}): {e}")
+        sys.exit(2)
 
     # Init core components
     ollama_client = OllamaClient(

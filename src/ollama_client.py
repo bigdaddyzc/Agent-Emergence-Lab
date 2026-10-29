@@ -78,13 +78,14 @@ class OllamaClient:
         try:
             resp = self.session.head(self.base_url, timeout=5)
             return resp.status_code == 200
-        except requests.ConnectionError:
+        except requests.RequestException:
+            # Timeouts, refused connections, invalid URLs ... all mean "not usable".
             return False
 
     def list_models(self) -> list[str]:
-        resp = self._request("GET", "/api/tags")
-        models = resp.json().get("models", [])
-        return [m["name"] for m in models]
+        data = self._json(self._request("GET", "/api/tags"))
+        models = data.get("models", []) or []
+        return [m["name"] for m in models if isinstance(m, dict) and "name" in m]
 
     def pull_model(self, model: str) -> None:
         logger.info("Pulling model %s ...", model)
@@ -116,7 +117,7 @@ class OllamaClient:
             },
         }
         resp = self._request("POST", "/api/generate", json_data=payload)
-        data = resp.json()
+        data = self._json(resp)
         return OllamaResponse.from_api(data, model)
 
     def chat(self, model: str, messages: list[dict], *,
@@ -141,10 +142,10 @@ class OllamaClient:
             },
         }
         resp = self._request("POST", "/api/chat", json_data=payload)
-        data = resp.json()
+        data = self._json(resp)
         # Extract the assistant's reply
-        msg = data.get("message", {})
-        reply_text = msg.get("content", "")
+        msg = data.get("message") or {}
+        reply_text = msg.get("content", "") if isinstance(msg, dict) else ""
         # Wrap into the same shape as generate response
         wrapped = {
             "response": reply_text,
@@ -160,7 +161,7 @@ class OllamaClient:
             "POST", "/api/embed",
             json_data={"model": model, "input": input_text},
         )
-        data = resp.json()
+        data = self._json(resp)
         embeddings = data.get("embeddings", [])
         return embeddings[0] if embeddings else []
 
@@ -245,6 +246,25 @@ class OllamaClient:
 
     # ---- Internal ----
 
+    @staticmethod
+    def _json(resp: requests.Response) -> dict:
+        """Decode a JSON object body, turning malformed replies into OllamaError.
+
+        Ollama can also answer HTTP 200 with ``{"error": "..."}`` (for example
+        when a model fails to load mid-stream); surface that as an error instead
+        of silently returning an empty response.
+        """
+        try:
+            data = resp.json()
+        except ValueError as e:
+            body = (getattr(resp, "text", "") or "")[:200]
+            raise OllamaError(f"Invalid JSON from Ollama: {e}; body={body!r}") from e
+        if not isinstance(data, dict):
+            raise OllamaError(f"Unexpected Ollama response type: {type(data).__name__}")
+        if data.get("error"):
+            raise OllamaRequestError(f"Ollama error: {data['error']}")
+        return data
+
     def _request(self, method: str, path: str, *,
                  json_data: Optional[dict] = None,
                  max_retries: int = 3,
@@ -285,6 +305,9 @@ class OllamaClient:
                 )
             except (OllamaRequestError, OllamaServerError):
                 raise
+            except requests.RequestException as e:
+                # e.g. ChunkedEncodingError when the server drops mid-response
+                last_exc = OllamaError(f"Request to {url} failed: {e}")
 
             if attempt < max_retries:
                 logger.warning(

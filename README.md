@@ -6,7 +6,8 @@
 
 *A dual-agent dialogue system designed to observe emergent capabilities through continuous free conversation*
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://python.org)
+[![CI](https://github.com/bigdaddyzc/Agent-Emergence-Lab/actions/workflows/ci.yml/badge.svg)](https://github.com/bigdaddyzc/Agent-Emergence-Lab/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![Ollama](https://img.shields.io/badge/Ollama-local%20LLM-black)](https://ollama.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![No GPU Required](https://img.shields.io/badge/GPU-not%20required-brightgreen)](https://github.com/bigdaddyzc/Agent-Emergence-Lab)
@@ -149,7 +150,7 @@ The system tracks 6 signal types in real time:
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.10+ (CI runs 3.11)
 - [Ollama](https://ollama.ai) installed
 
 ### Installation
@@ -193,6 +194,44 @@ python3 src/main.py --topic "consciousness and subjective experience" --turns 0
 python3 src/main.py --topic "the nature of creativity" --turns 30
 ```
 
+### Baseline / Control Experiment
+
+A dual-agent transcript full of `【新概念】` tags proves little on its own: a single
+model prompted the same way might produce just as many. `src/experiment.py` runs the
+**same topic** through control conditions and the dual-agent system, then re-scores
+every transcript with the **same** evaluator (`src/evaluator.py`).
+
+| Mode | What runs | Compare with |
+|---|---|---|
+| `single_agent` | One model, one persona, monologue (sees its own full history) | — control |
+| `self_dialogue` | Dual loop, but both personas run agent_a's model | — control |
+| `dual_basic` | Two different models, no long-term memory, no depth progression | vs `single_agent`: effect of interaction · vs `self_dialogue`: effect of model diversity |
+| `dual_memory` / `dual_depth` / `full` | dual_basic + memory / + depth / everything as configured | ablations |
+
+`single_agent`, `self_dialogue` and `dual_basic` share identical memory/depth settings, and
+every mode gets the same budget: `--turns N` = N rounds = 2N utterances.
+
+```bash
+# Default modes: single_agent + self_dialogue + dual_basic (here 6 rounds each, 3 runs)
+python3 src/experiment.py --topic "the nature of memory" --turns 6 --runs 3
+
+# Add the full system and pick the baseline explicitly
+python3 src/experiment.py --topic "the nature of memory" --turns 6 --runs 3 \
+    --modes single_agent dual_basic full --baseline single_agent
+
+# Re-score an old experiment (e.g. after editing emergence patterns)
+python3 scripts/compare_experiments.py logs/experiments/latest.json --config config.yaml
+```
+
+Outputs `logs/experiments/latest.json` (manifest + per-session scores) and
+`logs/experiments/latest.md` (mean ± std per mode, plus `signals_per_utterance` as a
+ratio to the baseline). Reported metrics include signals per utterance / per 100 tokens,
+concept count and *uptake* (a concept mentioned again in a later utterance), analogies,
+challenges, reasoning steps, repetition vs the previous utterance, and drift from the topic.
+
+> The scores are regex heuristics, not proof of emergence. Use several topics and
+> `--runs ≥ 3`, and read the transcripts before trusting a gap.
+
 ---
 
 ## Project Structure
@@ -208,8 +247,13 @@ Agent-Emergence-Lab/
 │   ├── memory.py        # Two-tier memory system (extraction, retrieval, consolidation)
 │   ├── logger.py        # JSONL / Markdown / snapshot logging
 │   ├── ollama_client.py # Ollama HTTP API wrapper
+│   ├── evaluator.py     # Heuristic emergence signals & dialogue quality
+│   ├── experiment.py    # Baseline/control experiments + comparison report
+│   ├── config_validator.py # Config checks run at startup
 │   └── feishu.py        # Optional Feishu/Lark webhook integration
-└── tests/               # Unit tests (pytest)
+├── scripts/             # Session analysis, reports, model benchmark, experiment comparison
+├── .github/workflows/   # CI: pytest on Python 3.11
+└── tests/               # Unit tests (pytest, fake Ollama client — no server needed)
 ```
 
 ---
@@ -352,3 +396,35 @@ ollama serve  # 另开终端
 source venv/bin/activate
 python3 src/main.py --topic "意识与主观体验" --turns 0
 ```
+
+**对照实验（基线）：**
+
+光看双 Agent 对话里出现了多少【新概念】并不能说明“涌现”——同样提示词下的单个模型也许一样多。
+`src/experiment.py` 让**同一个话题**分别跑对照组和双 Agent 组，再用**同一个评估器**给每份对话打分：
+
+| 模式 | 内容 | 对比意义 |
+|---|---|---|
+| `single_agent` | 单模型单人格自言自语（能看到自己的完整历史） | 对照组 |
+| `self_dialogue` | 双 Agent 流程，但两个人格都用 agent_a 的模型 | 对照组 |
+| `dual_basic` | 两个不同模型，无长期记忆、无深度推进 | 对比 `single_agent` 看“交互”本身的作用；对比 `self_dialogue` 看“模型差异”的作用 |
+| `dual_memory` / `dual_depth` / `full` | 在 dual_basic 基础上加记忆 / 加深度推进 / 完整系统 | 消融实验 |
+
+`single_agent`、`self_dialogue`、`dual_basic` 的记忆和深度设置完全相同；所有模式生成预算一致：`--turns N` = N 轮 = 2N 次发言。
+
+```bash
+# 默认运行 single_agent + self_dialogue + dual_basic
+python3 src/experiment.py --topic "记忆的本质" --turns 6 --runs 3
+
+# 加入完整系统并指定基线
+python3 src/experiment.py --topic "记忆的本质" --turns 6 --runs 3 \
+    --modes single_agent dual_basic full --baseline single_agent
+
+# 修改涌现规则后重新给旧实验打分
+python3 scripts/compare_experiments.py logs/experiments/latest.json --config config.yaml
+```
+
+结果写入 `logs/experiments/latest.json`（清单 + 每场得分）和 `logs/experiments/latest.md`（各模式均值 ± 标准差，以及相对基线的 `signals_per_utterance` 倍数）。
+
+> 这些分数是基于正则的启发式信号，不是涌现的证明。请用多个话题、`--runs ≥ 3`，并在相信差距之前读一读对话原文。
+
+**运行测试：** `python3 -m pytest -q`（使用假的 Ollama 客户端，无需启动 Ollama；CI 在 Python 3.11 上自动运行）。
