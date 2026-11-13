@@ -2,9 +2,9 @@
 
 # 🧪 Agent Emergence Lab
 
-**Two small AI models talk freely. Something unexpected happens.**
+**Compare local LLM conversations—with controls, not just compelling transcripts.**
 
-*A dual-agent dialogue system designed to observe emergent capabilities through continuous free conversation*
+*An Ollama-based research CLI for dual-agent dialogue, memory experiments, and heuristic evaluation.*
 
 [![CI](https://github.com/bigdaddyzc/Agent-Emergence-Lab/actions/workflows/ci.yml/badge.svg)](https://github.com/bigdaddyzc/Agent-Emergence-Lab/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org)
@@ -13,7 +13,7 @@
 [![No GPU Required](https://img.shields.io/badge/GPU-not%20required-brightgreen)](https://github.com/bigdaddyzc/Agent-Emergence-Lab)
 [![Models](https://img.shields.io/badge/Models-Qwen2.5--3B%20%7C%20Llama3.2--3B-orange)](https://ollama.ai/library)
 
-[English](#why-this-project) · [中文](#中文说明) · [Quick Start](#quick-start) · [How It Works](#how-it-works)
+[Quick Start](#quick-start) · [Baseline Experiments](#baseline--control-experiment) · [Interpretation and Limits](#interpretation-and-limits) · [How It Works](#how-it-works) · [中文](#中文说明)
 
 </div>
 
@@ -22,6 +22,18 @@
 > **What is "emergence"?** Abilities that appear in a system that were not present in any of its individual components. This project asks: can two 3B-parameter models, talking freely, produce reasoning neither could achieve alone?
 
 ---
+
+## What You Can Compare
+
+For developers and research hobbyists exploring how conversation structure affects local language-model output:
+
+- **Baselines:** compare a single-agent monologue, same-model self-dialogue, and two-model dialogue under matched generation budgets.
+- **Ablations:** vary long-term memory and depth progression across topics and repeated runs.
+- **Evaluation:** inspect JSONL/Markdown transcripts, heuristic scores, optional model judging, and human-calibration reports.
+
+## Interpretation and Limits
+
+This is experimental research tooling, not evidence that two models have acquired new capabilities. Detected signals are heuristic indicators; persuasive dialogue alone does not establish emergence. Default signal patterns are primarily Chinese-language, so other languages need appropriate rules and calibration. Inference uses local Ollama by default; the optional Feishu/Lark webhook sends messages externally when enabled.
 
 ## Demo
 
@@ -44,7 +56,7 @@
   ✦ Reasoning depth      : 追问第二层因果
 ```
 
-> *Actual output from a conversation on the topic "the nature of memory"*
+> *Example dialogue excerpt on "the nature of memory." Outputs depend on models, prompts, and sampling; this excerpt is not a benchmark result.*
 
 ---
 
@@ -65,7 +77,7 @@ The hypothesis: sustained dialogue between complementary cognitive styles — on
 | **Strengths** | Logical deduction, step-by-step reasoning | Analogy generation, lateral thinking |
 | **Temperature** | 0.70 | 0.80 |
 
-The tension between these two styles is the engine of emergence.
+The contrast between these two prompted styles is an experimental variable—not a guarantee of emergence.
 
 ---
 
@@ -438,13 +450,13 @@ MIT © [bigdaddyzc](https://github.com/bigdaddyzc)
 
 **Agent Emergence Lab** 是一个双 Agent 自由对话实验系统。
 
-两个不同人格的小模型（Nova 理性分析型 / Riven 创意发散型）在无人工干预的情况下持续交流，系统自动追踪对话中出现的涌现行为——那些超越单个模型能力边界的推理模式。
+两个不同提示人格的小模型（Nova 理性分析型 / Riven 创意发散型）持续交流，系统记录记忆、对话和启发式信号。你可以与单模型、自我对话及记忆／深度消融组比较；这些信号不是模型获得新能力或发生涌现的证明。默认信号规则主要面向中文，换语言时需要调整和校准。
 
 **核心特性：**
 - 双层记忆（短期工作记忆 + 长期知识提取与检索）
 - 5 个深度层级的自动进阶
 - 6 类涌现信号实时检测
-- 纯本地部署，基于 Ollama，无需 GPU，无需外部 API
+- 默认使用本地 Ollama 推理，无需云端 LLM API；GPU 可选，安装依赖和下载模型需要网络
 - 支持飞书 Webhook 实时推送对话
 
 **快速开始：**
